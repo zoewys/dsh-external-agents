@@ -13,6 +13,7 @@ export interface Binding {
   command: Command
   values: Record<string, string | boolean>
   skillProtocol?: 'on-demand'
+  connectionSettings?: string
   sentThrough: string | null
   updatedAt: number
 }

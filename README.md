@@ -13,8 +13,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.1.5.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.5.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.1.6.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.6.tgz"
 ```
 
 使用桌面发行版自带的 0.2.2-rc.3 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
@@ -29,7 +29,9 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.5.tgz"
 
 ## 配置与范围
 
-把配置加在 DSH profile patch 的 `external-agents` 条目：
+打开 **插件 → 外部 Agent → 设置**，可调整 DSH 技能共享、MCP 共享和 Codex 连接方式。保存后，受影响的 Agent 会话在下一轮使用新配置，并带入之前的对话摘要。模型菜单将 Kimi Code 和 Codex 放在带「外部 Agent」前缀的小组中，每个可选模型都有插件标签。
+
+也可以通过 DSH profile patch 的 `external-agents` 条目配置：
 
 ```yaml
 - id: external-agents

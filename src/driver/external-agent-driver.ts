@@ -36,12 +36,12 @@ interface Live {
   context: ContentBlock[]
   idleTimer?: NodeJS.Timeout
   skillServer?: Awaited<ReturnType<typeof startSkillServer>>
-  pendingSkillMigration: boolean
+  pendingContextHandoff: boolean
 }
 interface SessionOptions {
   id: string; agent: AgentId; cwd: string; securityMode: string; model: string; effort?: string;
   signal: AbortSignal; summary: string; nativeIntervened?: boolean; permissionContinuation?: boolean;
-  injection: () => Injection; notice: (text: string) => void
+  injection: (config: Config) => Injection; notice: (text: string) => void
 }
 
 export class ExternalAgentDriver {
@@ -60,10 +60,11 @@ export class ExternalAgentDriver {
   current(id: string) { return this.active.get(id) }
 
   probe(agent: AgentId, cwd: string, refresh = false) {
-    const key = agent + '\0' + cwd
+    const config = {...this.config}
+    const key = agent + '\0' + cwd + '\0' + (agent === 'codex' ? config.codexTransport : '')
     const cached = this.probeCache.get(key)
     if (!refresh && cached && Date.now() - cached.at < 60_000) return cached.result
-    const result = this.check(agent, cwd)
+    const result = this.check(agent,cwd,config)
     this.probes.add(result)
     void result.then(()=>this.probes.delete(result),()=>this.probes.delete(result))
     if (this.probeCache.size >= 128) this.probeCache.clear()
@@ -71,15 +72,15 @@ export class ExternalAgentDriver {
     return result
   }
 
-  private async check(agent: AgentId, cwd: string): Promise<{ readiness: Readiness; options: SessionConfigOption[] }> {
+  private async check(agent: AgentId, cwd: string, config: Config): Promise<{ readiness: Readiness; options: SessionConfigOption[] }> {
     let client: AcpClient | undefined
     let probeSession: string | undefined
     let canDelete = false
     try {
       this.shutdown.signal.throwIfAborted()
-      const command = await resolveCommand(agent, this.config)
+      const command = await resolveCommand(agent,config)
       if (!command) return { readiness: { status: 'not_installed' }, options: [] }
-      client = connect(command, cwd, childEnvironment(agent,this.config.codexTransport))
+      client = connect(command,cwd,childEnvironment(agent,config.codexTransport))
       const init = await client.initialize(this.shutdown.signal)
       validateInit(init)
       canDelete = !!init.agentCapabilities?.sessionCapabilities?.delete
@@ -104,23 +105,30 @@ export class ExternalAgentDriver {
     const signal = AbortSignal.any([params.signal, this.shutdown.signal])
     const { id, agent, cwd, securityMode, notice } = params
     signal.throwIfAborted()
+    const config = {...this.config}
+    const connectionSettings = JSON.stringify([
+      config.injectDshSkills, config.injectDshMcp, agent === 'codex' ? config.codexTransport : null,
+    ])
     const previous = await this.store.get(id)
-    const command = await resolveCommand(agent, this.config)
+    const command = await resolveCommand(agent,config)
     if (!command) throw new AcpError('未找到 ' + profiles[agent].name + '。请打开设置向导。')
     signal.throwIfAborted()
     const sameCommand = (saved: Binding['command']) => saved.command === command.command && JSON.stringify(saved.args) === JSON.stringify(command.args)
     let current = this.active.get(id)
-    if (current && (current.client.closed || current.binding.agentId !== agent || current.binding.cwd !== cwd || !sameCommand(current.binding.command) || freshModel)) {
+    if (current && (current.client.closed || current.binding.agentId !== agent || current.binding.cwd !== cwd
+      || current.binding.connectionSettings !== connectionSettings || !sameCommand(current.binding.command) || freshModel)) {
       await this.release(id)
       current = undefined
     }
     const switched = previous && previous.agentId !== agent
     const legacySkills = previous?.agentId === agent && previous.skillProtocol !== 'on-demand'
+    const reconfigured = previous?.agentId === agent && previous.connectionSettings !== undefined
+      && previous.connectionSettings !== connectionSettings
     if (current?.idleTimer) clearTimeout(current.idleTimer)
     if (!current) {
       let live: Live | undefined
       let skillServer: Live['skillServer']
-      const client = connect(command, cwd, childEnvironment(agent,this.config.codexTransport), {
+      const client = connect(command,cwd,childEnvironment(agent,config.codexTransport), {
         update: event => {
           if (!live || event.sessionId !== live.binding.acpSessionId) return
           if (event.update.sessionUpdate === 'config_option_update') live.options = event.update.configOptions
@@ -139,7 +147,7 @@ export class ExternalAgentDriver {
       try {
         const init = await client.initialize(signal)
         validateInit(init)
-        const injection = params.injection()
+        const injection = params.injection(config)
         const capabilities: AgentCapabilities = init.agentCapabilities ?? {}
         const payload = mcpPayload(injection.entries, capabilities.mcpCapabilities, cwd)
         for (const warning of injection.notices) notice(warning)
@@ -162,12 +170,13 @@ export class ExternalAgentDriver {
         const openParams: NewSessionRequest = { cwd, mcpServers: payload.servers }
         live = {
           client, init, options: [], replaying: true, context: [], lifetime:new AbortController(),interactions:new Set(),
-          skillServer, pendingSkillMigration:legacySkills,
+          skillServer, pendingContextHandoff:legacySkills || reconfigured,
           binding: { dshSessionId: id, agentId: agent, acpSessionId: previous?.acpSessionId ?? '', cwd,
-            agentCapabilities: capabilities, command, values: {}, skillProtocol:'on-demand', sentThrough: null, updatedAt: Date.now() },
+            agentCapabilities: capabilities, command, values: {}, skillProtocol:'on-demand', connectionSettings, sentThrough: null, updatedAt: Date.now() },
         }
         let restored = false
-        if (!freshModel && !legacySkills && !params.nativeIntervened && previous?.agentId === agent && previous.cwd === cwd && sameCommand(previous.command)) {
+        if (!freshModel && !legacySkills && !reconfigured && !params.nativeIntervened
+          && previous?.agentId === agent && previous.cwd === cwd && sameCommand(previous.command)) {
           const methods = [
             ...(capabilities.sessionCapabilities?.resume ? ['session/resume' as const] : []),
             ...(capabilities.loadSession ? ['session/load' as const] : []),
@@ -195,6 +204,7 @@ export class ExternalAgentDriver {
           if (freshModel) notice('该 Agent 无法在原会话里切换模型。已创建新会话并带入上文摘要。')
           else if (switched) notice('已切换到 ' + profiles[agent].name + '，并带入上文摘要。新 Agent 不会继承原 Agent 的内部记忆。')
           else if (legacySkills) notice('技能已切换为按需加载，新的 ACP 会话带入了 DSH 对话摘要。')
+          else if (reconfigured) notice('外部 Agent 设置已生效，已带入之前的对话摘要。')
           else if (previous && params.nativeIntervened) notice('已回到 ' + profiles[agent].name + '。新的 ACP 会话带入了 DSH 对话摘要。')
           else if (previous) notice('原 ACP 会话无法恢复。已带入 DSH 对话摘要，外部 Agent 从新的内部上下文开始。')
         }
@@ -318,10 +328,10 @@ export class ExternalAgentDriver {
       const result = await live.client.prompt({ sessionId: id, prompt: [
         ...live.context, ...input,
       ] })
-      if (live.pendingSkillMigration) signal.throwIfAborted()
+      if (live.pendingContextHandoff) signal.throwIfAborted()
       if (sentThrough) live.binding.sentThrough = sentThrough
       await this.save(live,true)
-      live.pendingSkillMigration = false
+      live.pendingContextHandoff = false
       live.context = []
       signal.throwIfAborted()
       return result
@@ -342,7 +352,7 @@ export class ExternalAgentDriver {
   }
 
   private async save(live: Live, completedTurn = false) {
-    if (live.pendingSkillMigration && !completedTurn) return
+    if (live.pendingContextHandoff && !completedTurn) return
     live.binding.updatedAt = Date.now()
     live.binding.values = Object.fromEntries(live.options.map(option => [option.id, option.currentValue]))
     return this.store.save(live.binding)

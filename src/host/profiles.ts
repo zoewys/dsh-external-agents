@@ -38,13 +38,26 @@ export function parseConfig(raw: unknown): Config {
   const data = record(raw ?? {})
   const keys = ['injectDshSkills', 'injectDshMcp', 'commandOverrides','codexTransport']
   if (Object.keys(data).some(key => !keys.includes(key))) throw new Error('外部 Agent 配置含有未知字段。')
-  const flags = ['injectDshSkills', 'injectDshMcp'] as const
-  for (const key of flags) {
-    if (data[key] !== undefined && typeof data[key] !== 'boolean') throw new Error('技能和 MCP 开关必须是布尔值。')
+  const field = (key: string): unknown => {
+    const value = data[key]
+    return value !== null && typeof value === 'object' && 'get' in value && typeof value.get === 'function'
+      ? value.get() : value
   }
-  if (data.codexTransport !== undefined && data.codexTransport !== 'https' && data.codexTransport !== 'native') {
-    throw new Error('Codex 连接方式应为 https 或 native。')
+  const enabled = (key: string) => {
+    const value = field(key)
+    if (value !== undefined && typeof value !== 'boolean') throw new Error('技能和 MCP 开关必须是布尔值。')
+    return value !== false
   }
+  const transport = () => {
+    const value = field('codexTransport')
+    if (value !== undefined && value !== 'https' && value !== 'native') {
+      throw new Error('Codex 连接方式应为 https 或 native。')
+    }
+    return value ?? 'native'
+  }
+  enabled('injectDshSkills')
+  enabled('injectDshMcp')
+  transport()
   const overrides: Config['commandOverrides'] = {}
   for (const [id, value] of Object.entries(record(data.commandOverrides ?? {}))) {
     const { command, args, ...extra } = record(value)
@@ -54,7 +67,12 @@ export function parseConfig(raw: unknown): Config {
     }
     overrides[id] = { command, args }
   }
-  return { injectDshSkills: data.injectDshSkills !== false, injectDshMcp: data.injectDshMcp !== false, commandOverrides: overrides, codexTransport: data.codexTransport === 'https' ? 'https' : 'native' }
+  return {
+    get injectDshSkills() { return enabled('injectDshSkills') },
+    get injectDshMcp() { return enabled('injectDshMcp') },
+    get codexTransport() { return transport() },
+    commandOverrides:overrides,
+  }
 }
 
 const home = homedir()

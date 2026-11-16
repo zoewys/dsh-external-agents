@@ -77,6 +77,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
 
   return {
     run:(...messages)=>runWith(undefined,...messages),
+    catalog:async()=>({provider:adapter.providerInfo(provider),models:await adapter.listModels(provider)}),
     runWith,
     permissions(next) {
       preset=next
@@ -258,4 +259,29 @@ test('tightening permissions stops the old mode and exposes a one-time continuat
   assert.equal(queued.length,1)
   assert.match(queued[0].content[0].text,/当前权限/)
   assert.equal(await run(message('next','report-mode')),'default')
+})
+
+
+test('native model catalog marks the default and advertised models as external-agent models', async t => {
+  const {catalog}=await setup(t)
+  const {provider,models}=await catalog()
+  assert.deepEqual(provider,{id:'external-acp-codex',name:'外部 Agent · Codex'})
+  assert.deepEqual(models.map(model=>model.id),['@default','one','two'])
+  for(const model of models) {
+    assert.equal(model.provider,provider.id)
+    assert.deepEqual(model.badge,{text:{zh:'外部 Agent',en:'External Agent'},tone:'info'})
+  }
+})
+
+test('saving a skill setting applies on the next turn of an existing external session', async t => {
+  let enabled=true
+  const registry={
+    list:async()=>[{name:'clarify',description:'Clarify requirements',invocation:{modelInvocable:true}}],
+  }
+  const {run}=await setup(t,{registry,args:['skill-tools'],config:{injectDshSkills:{get:()=>enabled}}})
+  const original=JSON.parse(await run(message('discover','list-dsh-skills')))
+  assert.match(original.content[0].text,/clarify/)
+  enabled=false
+  const reopened=await run(message('discover-again','list-dsh-skills'))
+  assert.match(reopened,/no DSH skill endpoint/)
 })

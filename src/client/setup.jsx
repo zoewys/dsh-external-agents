@@ -1,4 +1,5 @@
 import React, {useEffect,useRef,useState} from 'react'
+import { registerPluginSettings } from './plugin-settings.jsx'
 
 const base = './api/dsh-external-agents'
 const names = {'external-acp-kimi-code':'Kimi Code','external-acp-codex':'Codex'}
@@ -161,8 +162,9 @@ function HeaderAction({sessionId,useProjection,useSession,blankOnly=false}) {
   </>
 }
 
-export const inject = ['slots']
+export const inject = ['slots','configForms']
 export function apply(ctx) {
+  registerPluginSettings(ctx)
   const slot = 'conversation.session.header.utilities'
   ctx.slots.inject(slot,()=>ctx.slots.register({name:slot,id:'external-agents-session',order:10}, HeaderAction))
   const setup = 'conversation.input.right'

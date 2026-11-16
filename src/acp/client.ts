@@ -48,7 +48,7 @@ export function connect(command: Command, cwd: string, env: NodeJS.ProcessEnv, h
     get closed() { return client.signal.aborted },
     initialize: (signal?: AbortSignal) => client.agent.request<InitializeResponse>('initialize', {
       protocolVersion: PROTOCOL_VERSION,
-      clientInfo: { name: 'dsh-external-agents', version: '0.1.5' },
+      clientInfo: { name: 'dsh-external-agents', version: '0.1.6' },
       clientCapabilities: { elicitation: { form: {} }, plan: {} },
     }, time(signal, 45_000)),
     open: (params: NewSessionRequest, signal?: AbortSignal) =>

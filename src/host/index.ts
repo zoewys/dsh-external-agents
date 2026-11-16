@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { LlmModelBadge, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionConfigOption, ContentBlock } from '@agentclientprotocol/sdk/unstable'
 import { AcpError, safeError } from '../acp/client.ts'
@@ -19,10 +19,12 @@ import { registerSetup } from './setup.ts'
 import { lastPermissionPause, permissionPauseReason, watchPermissions } from './permission-update.ts'
 
 export const name = 'external-agents'
+export { Config } from './config.ts'
 export const inject = ['agents', 'sessions', 'llm', 'sandboxPolicy', 'permissionPresets', 'approval', 'userQuestions', 'sessionController', 'webServer', 'connection']
 const routePrefix = 'external-acp-'
 const defaultModel = '@default'
 const agentEntries = Object.keys(profiles) as AgentId[]
+const modelBadge: LlmModelBadge = {text:{zh:'外部 Agent',en:'External Agent'},tone:'info'}
 
 export function routeAgent(provider: string | undefined): AgentId | undefined {
   const id = provider?.startsWith(routePrefix) ? provider.slice(routePrefix.length) : undefined
@@ -147,7 +149,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         effort: request.reasoningEffort, signal,
         summary: summarize(msgs.slice(0, firstCurrent)), nativeIntervened, notice,
         permissionContinuation: lastPermissionPause(session,openTurnStartSeq) !== undefined,
-        injection: () => collectInjection(ctx,agent,driver.config),
+        injection: config => collectInjection(ctx,agent,config),
       })
       const content: ContentBlock[] = []
       for (const message of input) {
@@ -241,14 +243,14 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
   }
 
   return {
-    providerInfo: provider => ({ id:provider, name:display(provider) }),
+    providerInfo: provider => ({ id:provider, name:'外部 Agent · ' + display(provider) }),
     providerRetryPolicy: () => ({mode:'normal',maxRetries:0,retryableCodes:[],initialDelayMs:0,maxDelayMs:0,jitterRatio:0}),
     async listModels(provider) {
       const id = routeAgent(provider)!
       const options = (await driver.probe(id,cwd())).options
       const model = options.find(option => option.category === 'model')
-      return [resolved(provider, defaultModel, options), ...(model ? choices(model).map(choice => ({
-        ...resolved(provider,choice.value, options), name:choice.name, description: choice.description ?? undefined,
+      return [{...resolved(provider,defaultModel,options),badge:modelBadge}, ...(model ? choices(model).map(choice => ({
+        ...resolved(provider,choice.value,options), name:choice.name, description:choice.description ?? undefined, badge:modelBadge,
       })) : [])]
     },
     resolveModel: describe,
