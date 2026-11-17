@@ -85,12 +85,12 @@ function Dialog({view,error,busy,close,retry,setOption}) {
     </div> : <div className="ea-main ea-controls">
       <p>当前模型：{model?.choices.find(o=>o.value === (view.model === '@default' ? model.currentValue : view.model))?.name ?? view.model}</p>
       {mode && <p>运行模式随 DSH 权限：{mode.choices.find(o=>o.value === mode.currentValue)?.name ?? mode.currentValue}</p>}
-      {planAvailable && <label>仅规划 <input type="checkbox" checked={view.plan} disabled={busy || view.running}
+      {planAvailable && <label>仅规划 <input type="checkbox" checked={view.plan} disabled={busy || view.running || view.delegated}
         onChange={event=>void setOption('@plan',event.target.checked)} /></label>}
       {view.options.filter(option => ['thought_level','model_config','collaboration_mode'].includes(option.category)).map(option => <label key={option.id}>{option.name}
         {option.type === 'boolean'
-          ? <input type="checkbox" checked={option.currentValue} disabled={busy || view.running || !view.connected} onChange={event=>void setOption(option.id,event.target.checked)} />
-          : <select value={option.currentValue} disabled={busy || view.running || !view.connected} onChange={event=>void setOption(option.id,event.target.value)}>
+          ? <input type="checkbox" checked={option.currentValue} disabled={busy || view.running || view.delegated || !view.connected} onChange={event=>void setOption(option.id,event.target.checked)} />
+          : <select value={option.currentValue} disabled={busy || view.running || view.delegated || !view.connected} onChange={event=>void setOption(option.id,event.target.value)}>
             {option.choices.map(choice=><option key={choice.value} value={choice.value}>{choice.name}</option>)}
           </select>}
       </label>)}

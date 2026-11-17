@@ -9,6 +9,7 @@ import type { Host } from './dsh.ts'
 import { permissionChoice, posture } from './permissions.ts'
 import { AcpError } from '../acp/client.ts'
 import type { AgentId } from './profiles.ts'
+import { isDelegatedChild } from './subagent.ts'
 
 export function sessionPermissions(ctx: Host, agent: Agent) {
   const session = agent.session
@@ -24,7 +25,8 @@ export function executionPermissions(ctx: Host, agent: Agent, id: AgentId, plan:
   const permission = sessionPermissions(ctx, agent)
   const level = plan || permission.mode === 'read-only' ? 0 : permission.posture === 'full_open' ? 2 : 1
   const modes = id === 'codex' ? ['read-only','workspace-write','agent-full-access'] : ['plan','default','yolo']
-  const approval: TurnApproval = plan ? 'deny' : permission.posture === 'full_open' ? 'allow' : permission.policy === 'never' ? 'deny' : 'ask'
+  const approval: TurnApproval = plan ? 'deny' : permission.posture === 'full_open' ? 'allow'
+    : permission.policy === 'never' || isDelegatedChild(agent) ? 'deny' : 'ask'
   return { mode:modes[level], level, approval }
 }
 
@@ -33,11 +35,11 @@ export async function approve(ctx: Host, agent: Agent, req: RequestPermissionReq
   const cancelled = { outcome: { outcome: 'cancelled' as const } }
   if (signal.aborted) return cancelled
   const effective = permission()
-  if (effective === 'deny') {
+  let selected = effective === 'allow' ? permissionChoice(req.options,true) : undefined
+  if (effective === 'deny' || (!selected && isDelegatedChild(agent))) {
     const rejection = permissionChoice(req.options,false)
     return rejection ? { outcome: { outcome:'selected',optionId:rejection.optionId } } : cancelled
   }
-  let selected = effective === 'allow' ? permissionChoice(req.options,true) : undefined
   if (!selected) {
     const allowed = req.options.some(option => option.kind === 'allow_once')
     const answer = await ctx.approval.request({ agent, signal, callId, toolName: req.toolCall.title || '外部 Agent',

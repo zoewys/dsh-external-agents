@@ -1,6 +1,6 @@
 {
   "name": "dsh-external-agents",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "type": "module",
   "description": "Kimi Code and Codex in native DeepSeek Harness conversations over ACP",
   "main": "./dist/host/index.js",
@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.6.0",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.3",
     "@deepseek-ai/schemastery": "3.19.0",
     "@modelcontextprotocol/sdk": "1.32.2"
   },

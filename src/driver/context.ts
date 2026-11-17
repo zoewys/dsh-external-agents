@@ -1,7 +1,7 @@
 export interface Message {
   role: string
   id?: string
-  source?: {kind?: string; eventId?: string}
+  source?: {kind?: string; eventId?: string; form?: string; senderSessionId?: string}
   content: readonly {type: string; text?: string; name?: string}[]
 }
 
@@ -14,7 +14,12 @@ export function isUserOrRemoteTaskInput(message: Pick<Message,'role'|'source'>):
   return message.role === 'user' && (source === 'user' || source === 'dsh-remote-tasks')
 }
 
-export function summarize(history: readonly Message[]): string {
+export function isDelegationMessage(message: Pick<Message,'role'|'source'>): boolean {
+  const source = message.source
+  return message.role === 'user' && source?.kind === 'agent-message' && source.form === 'relay' && !!source.senderSessionId
+}
+
+export function summarize(history: readonly Message[], delegated = false): string {
   const inputs = history.filter(isUserOrRemoteTaskInput)
   const latestTask = inputs.findLast(message => message.source?.kind === 'dsh-remote-tasks')
   const taskId = latestTask?.source?.eventId
@@ -28,6 +33,7 @@ export function summarize(history: readonly Message[]): string {
   const instructions = [taskText,supplementText].filter(Boolean).join('\n\n')
   const progress = history.slice(-80).filter(message => !prioritized.has(message)).flatMap(message => {
     if (isUserOrRemoteTaskInput(message)) return ['用户：' + messageText(message)]
+    if (delegated && isDelegationMessage(message)) return ['DSH 智能体消息：' + messageText(message)]
     if (message.role === 'assistant') {
       const text = messageText(message).replace(
         /^> (?:未带入以下 DSH 技能：[^\n]*|DSH 技能已作为会话上下文提供。|读取 DSH 技能失败。)(?:\n+|$)/gm, '',

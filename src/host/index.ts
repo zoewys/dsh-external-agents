@@ -6,7 +6,7 @@ import type { LlmModelBadge, MessageId, ReasoningEffortId } from '@deepseek-ai/d
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionConfigOption, ContentBlock } from '@agentclientprotocol/sdk/unstable'
 import { AcpConnectionLost, AcpError, safeError } from '../acp/client.ts'
-import { isUserOrRemoteTaskInput, summarize, type Message } from '../driver/context.ts'
+import { isDelegationMessage, isUserOrRemoteTaskInput, summarize, type Message } from '../driver/context.ts'
 import { ExternalAgentDriver, type Injection } from '../driver/external-agent-driver.ts'
 import { dshTools, planText } from '../driver/map-updates.ts'
 import { choices } from '../driver/options.ts'
@@ -16,6 +16,7 @@ import { approve, elicit, executionPermissions, sessionPermissions } from './int
 import { isAgentId, parseConfig, profiles, type AgentId } from './profiles.ts'
 import type { McpEntry } from './injection.ts'
 import { registerSetup } from './setup.ts'
+import { childPersonaSections, delegationInstructions, isDelegatedChild } from './subagent.ts'
 import { lastPermissionPause, permissionPauseReason, watchPermissions } from './permission-update.ts'
 
 export const name = 'external-agents'
@@ -31,8 +32,9 @@ export function routeAgent(provider: string | undefined): AgentId | undefined {
   return isAgentId(id) ? id : undefined
 }
 
-function normalSession(agent: Agent | undefined): agent is Agent {
-  return !!agent && agent.session.header.origin !== 'subagent' && !agent.session.header.delegationDepth
+function nativeSession(agent: Agent | undefined): agent is Agent {
+  return !!agent && (isDelegatedChild(agent)
+    || (agent.session.header.origin !== 'subagent' && !agent.session.header.delegationDepth))
 }
 
 function isExplicitInput(message: Message) {
@@ -59,7 +61,8 @@ interface UiState {
   permissionDeferred?: boolean
 }
 
-function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<string, UiState>): LlmAdapter {
+function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<string, UiState>,
+  personas: WeakMap<Agent, readonly string[]>): LlmAdapter {
   const display = (provider: string) => profiles[routeAgent(provider)!].name
   const cwd = () => ctx.agents.currentInitiator()?.session.header.cwd ?? process.cwd()
   const resolved = (provider: string, model: string, options: SessionConfigOption[] = []): LlmResolvedModelInfo => {
@@ -84,10 +87,12 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
   async function* stream(request: GenerateOptions): AsyncGenerator<StreamChunk> {
     const id = routeAgent(request.provider)
     const agent = ctx.agents.currentInitiator()
-    if (!id || !normalSession(agent) || request.purpose !== undefined || agent.id !== request.sessionId
+    if (!id || !nativeSession(agent) || request.purpose !== undefined || agent.id !== request.sessionId
       || ctx.agents.get(agent.id) !== agent || agent.model.current()?.provider !== request.provider) {
       throw new AcpError('外部 Agent 只接受当前 DSH 会话的用户回合。')
     }
+    const delegated = isDelegatedChild(agent)
+    const accepts = (message: Message) => isExplicitInput(message) || (delegated && isDelegationMessage(message))
     const streamLifetime = new AbortController()
     const signal = request.signal ? AbortSignal.any([request.signal,streamLifetime.signal]) : streamLifetime.signal
     const idleMinutes = driver.config.idleWarningMinutes
@@ -135,13 +140,13 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     const run = (async () => {
       const session = agent.session
       const msgs = request.messages
-      // Current-step input is identified by DSH's own newly appended user events.
+      // Only these durable, current-step events can introduce new ACP input.
       const currentIds = new Set<string>()
       for (let n = session.seq - 1; n > stepSeq; n--) {
         const event = session.eventAt(n as typeof stepSeq)
-        if (event?.type === 'user/message' && isExplicitInput(event.data)) currentIds.add(event.data.id)
+        if (event?.type === 'user/message' && accepts(event.data)) currentIds.add(event.data.id)
       }
-      const input = msgs.filter(message => message.id && currentIds.has(message.id) && isExplicitInput(message))
+      const input = msgs.filter(message => message.id && currentIds.has(message.id) && accepts(message))
       if (!input.length) return
       state.permissionDeferred = false
       const firstCurrent = msgs.findIndex(message => message.id && currentIds.has(message.id))
@@ -160,7 +165,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         id: agent.id, agent: id, cwd: session.header.cwd ?? process.cwd(),
         securityMode: mode, model: request.model,
         effort: request.reasoningEffort, signal,
-        summary: summarize(msgs.slice(0, firstCurrent)), nativeIntervened, notice,
+        summary: summarize(msgs.slice(0, firstCurrent), delegated), nativeIntervened, notice,
         permissionContinuation: lastPermissionPause(session,openTurnStartSeq) !== undefined,
         injection: config => collectInjection(ctx,agent,config),
       })
@@ -179,6 +184,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         }
       }
       if (!content.length) throw new AcpError('这条消息没有外部 Agent 支持的内容。')
+      if (delegated) content.unshift({type:'text',text:delegationInstructions(personas.get(agent),msgs)})
       let permissions = readPermissions()
       while (mode !== permissions.mode) {
         mode = permissions.mode
@@ -226,7 +232,9 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         },
         permission: (req,interactionSignal) => pending(() => approve(ctx,agent,req,interactionSignal,
           watch.approval,interactionSignal.aborted ? undefined : tools.receive(req.toolCall)?.id)),
-        question: (req,interactionSignal) => pending(() => elicit(ctx,agent,req,interactionSignal)),
+        question: (req,interactionSignal) => delegated
+          ? Promise.resolve({action:'decline'})
+          : pending(() => elicit(ctx,agent,req,interactionSignal)),
       }, content, input.at(-1)?.id ?? null)
       if (result.stopReason === 'max_tokens') finish = {type:'finish',reason:{kind:'max-tokens'}}
       if (result.stopReason === 'refusal' && !queue.length && !delta) text('外部 Agent 拒绝了这次请求。')
@@ -292,7 +300,9 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
 function collectInjection(ctx: Host, agent: Agent, config: ExternalAgentDriver['config']): Injection {
   const notices: string[] = []
   const entries: Record<string, McpEntry> = Object.create(null)
-  if (config.injectDshMcp) {
+  // The host MCP config has no per-preset tool authorization. A delegated run
+  // keeps its scoped skills without acquiring additional host MCP transports.
+  if (config.injectDshMcp && !isDelegatedChild(agent)) {
     // Config is exposed on the manager. The roster reports enabled runtime
     // registrations too, but exposes no transport descriptor for those.
     const manager = (agent.ctx.get('mcpManager') ?? ctx.get('mcpManager')) as Host['mcpManager'] | undefined
@@ -312,7 +322,16 @@ export function apply(ctx: Host, raw?: unknown) {
   const driver = new ExternalAgentDriver(config,bindingStore(dir),
     (agent,message) => ctx.logger.warn(profiles[agent].name + ' ACP: ' + message))
   const states = new Map<string, UiState>()
-  ctx.llm.registerAdapter(agentEntries.map(id => routePrefix + id), nativeAdapter(ctx,driver,states))
+  const personas = new WeakMap<Agent, readonly string[]>()
+  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+    const assembled = await next()
+    const agent = context.agent
+    if (agent && isDelegatedChild(agent) && routeAgent(context.modelSelection?.provider)) {
+      personas.set(agent,childPersonaSections(assembled))
+    }
+    return assembled
+  },{global:true})
+  ctx.llm.registerAdapter(agentEntries.map(id => routePrefix + id), nativeAdapter(ctx,driver,states,personas))
   ctx.on('agent/disposed', ({ agent }) => {
     states.delete(agent.id)
     return driver.release(agent.id)
@@ -332,25 +351,26 @@ export function apply(ctx: Host, raw?: unknown) {
     const current = ctx.agents.get(id as SessionId)
     const result = current ? {agent:current} : await ctx.sessionController.resolveAgent(id as SessionId)
     const found = 'agent' in result ? result.agent : undefined
-    if (!normalSession(found) || found.id !== id) throw new AcpError('找不到可用的 DSH 会话。')
+    if (!nativeSession(found) || found.id !== id) throw new AcpError('找不到可用的 DSH 会话。')
     return found
   }
   const stopSetup = registerSetup(ctx,{
     async status(id,refresh) {
       const agent = await get(id)
+      const delegated = isDelegatedChild(agent)
       const selection = agent.model.current()
       const kind = routeAgent(selection?.provider)
       if (!kind) return null
       const current = driver.current(id)
       const live = current?.binding.agentId === kind && !current.client.closed ? current : undefined
-      const permissionPause = agent.status === 'idle' ? lastPermissionPause(agent.session) : undefined
+      const permissionPause = !delegated && agent.status === 'idle' ? lastPermissionPause(agent.session) : undefined
       const probe = live ? {readiness:{status:'ready'},options:live.options}
         : agent.status === 'running' ? {readiness:{status:'checking'},options:[]}
         : permissionPause !== undefined && !refresh ? {readiness:{status:'ready'},options:[]}
         : await driver.probe(kind,agent.session.header.cwd ?? process.cwd(),refresh)
       const state = states.get(id)
       return {
-        agent:kind, name:profiles[kind].name, install:profiles[kind].install, login:profiles[kind].login,
+        agent:kind, name:profiles[kind].name, install:profiles[kind].install, login:profiles[kind].login, delegated,
         model: selection?.model, permission:sessionPermissions(ctx,agent).preset, readiness:probe.readiness,
         options: probe.options.map(option => ({id:option.id, name:option.name, category:option.category, type:option.type,
           currentValue:option.currentValue, choices:choices(option).map(({value,name})=>({value,name}))})),
@@ -362,6 +382,7 @@ export function apply(ctx: Host, raw?: unknown) {
     },
     async option(id,key,value) {
       const agent = await get(id)
+      if (isDelegatedChild(agent)) throw new AcpError('子智能体的配置由 DSH 派发时决定。')
       if (agent.status === 'running') throw new AcpError('请等当前回合结束。')
       const selection = agent.model.current()
       const kind = routeAgent(selection?.provider)
@@ -382,6 +403,7 @@ export function apply(ctx: Host, raw?: unknown) {
     },
     async resume(id,pause) {
       const agent = await get(id)
+      if (isDelegatedChild(agent)) throw new AcpError('请由主会话继续子智能体任务。')
       if (agent.status !== 'idle' || !routeAgent(agent.model.current()?.provider) || lastPermissionPause(agent.session) !== pause
         || agent.inbox.nextTurn.some(isExplicitInput) || agent.inbox.nextStep.some(isExplicitInput)) {
         throw new AcpError('该回合已继续，或会话状态已改变。')

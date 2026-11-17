@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../src/host/index.ts'
 
-async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false } = {}) {
+async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false, child = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(),'dsh-remote-acp-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = cwd
@@ -26,7 +26,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
   const cancellations = []
   const diagnostics = []
   const queued = []
-  let route, listener, controller, turnBoundary, server
+  let route, listener, assemble, systemPrompt, disposeAgent, controller, turnBoundary, server
   let mode = permission
   let preset = permission
   let policy = permission === 'danger-full-access' ? 'never' : 'ask'
@@ -37,7 +37,8 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
   }
   const agent = {
     id:'external-session', status:'idle', inbox:{nextTurn:queued,nextStep:[]},
-    session:{id:'external-session',header:{cwd},append,get seq(){return events.length},eventAt:seq=>events[seq]},
+    session:{id:'external-session',header:{cwd,...child && {origin:'subagent',delegationDepth:1,parentSession:'parent'}},
+      append,get seq(){return events.length},eventAt:seq=>events[seq]},
     model:{current:()=>({provider})}, ctx:{get:name=>name==='skills' ? registry : undefined},
     cancel(cause) { cancellations.push(cause); controller.abort(cause) },
     followup(msg) { queued.push(msg) },
@@ -51,7 +52,11 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
     approval:{overrideOf:()=>policy},
     logger:{warn:message=>diagnostics.push(message)},
     webServer:{register:opts=>{route=opts.handler;return ()=>{}}}, connection:{requestRejection:()=>undefined},
-    get:()=>undefined,on:(name,fn)=>{if(name==='session/event')listener=fn},
+    get:()=>undefined,on(name,fn) {
+      if (name==='session/event') listener=fn
+      if (name==='system-prompt/assemble') assemble=fn
+      if (name==='agent/disposed') disposeAgent=fn
+    },
     effect:setup=>{dispose=setup()},
   },{
     injectDshMcp:false,...config,
@@ -59,6 +64,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
   })
 
   const runWith = async (onText, ...messages) => {
+    const history = events.filter(event=>event.type==='user/message').map(event=>event.data)
     const turn = (turnBoundary?.lastTurn ?? 0)+1
     const start = append('turn/start',{turn})
     const step = append('step/start',{turn,step:1})
@@ -67,7 +73,8 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
     controller=new AbortController()
     agent.status='running'
     try {
-      for await(const chunk of adapter.stream({provider,model:'one',sessionId:agent.id,messages,signal:controller.signal})) {
+      const requestMessages = [...(systemPrompt ? [systemPrompt] : []),...history,...messages]
+      for await(const chunk of adapter.stream({provider,model:'one',sessionId:agent.id,messages:requestMessages,signal:controller.signal})) {
         if(chunk.type==='text-delta') onText?.(chunk.text)
         if(captureFinish && chunk.type==='finish') return chunk.reason
         if(!captureFinish && chunk.type==='block-end') return chunk.block.text
@@ -81,6 +88,19 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
 
   return {
     run:(...messages)=>runWith(undefined,...messages),
+    assembleRole: async (complete = false) => {
+      const presentation = {
+        sections:[{name:'deployment:persona-prefix',text:'Review only for {{role}}.'},
+          {name:'deployment:persona-suffix',text:'Lead with the verdict.'},
+          {name:'tool:bash',text:'Reserved DSH tool instructions.'}],
+        contexts:[],variables:{role:'correctness'},
+      }
+      await assemble?.(presentation,{agent,modelSelection:{provider,model:'one'}},async()=>presentation)
+      systemPrompt = {role:'system',source:{kind:'system-prompt'},content:[{type:'text',text:complete
+        ? 'Review only for correctness.'
+        : 'Review only for correctness.\n\nReserved DSH tool instructions.\n\nLead with the verdict.'}]}
+    },
+    disposeAgent:()=>disposeAgent({agent}),
     catalog:async()=>({provider:adapter.providerInfo(provider),models:await adapter.listModels(provider)}),
     runWith,
     permissions(next) {
@@ -113,6 +133,47 @@ test('the DSH adapter forwards a remote task to Codex over ACP', async t => {
   const task = message('job-1','Reply with a read-only health check.',{kind:'dsh-remote-tasks',eventId:'job-1'})
   const runtime = message('runtime','Host runtime context.',{kind:'runtime-context'})
   assert.equal(await run(task,runtime),JSON.stringify(task.content))
+})
+
+for (const agentKind of ['kimi-code','codex']) {
+  test(agentKind+' receives the DSH child role, first task and later messages', async t => {
+    const {run,assembleRole,disposeAgent} = await setup(t,{agentKind,child:true,args:['no-resume']})
+    const task = message('task','Audit the first patch.')
+    const followup = message('relay','Also check the second patch.',{kind:'agent-message',form:'relay',senderSessionId:'parent'})
+    const runtime = message('runtime','Reserved DSH runtime data.',{kind:'runtime-context'})
+    await assembleRole()
+    const initial = await run(task,runtime)
+    assert.match(initial,/Review only for correctness/)
+    assert.match(initial,/Lead with the verdict/)
+    assert.match(initial,/Audit the first patch/)
+    assert.doesNotMatch(initial,/Reserved DSH/)
+
+    const next = await run(followup)
+    assert.match(next,/Also check the second patch/)
+    assert.doesNotMatch(next,/Audit the first patch/)
+    await disposeAgent()
+    await assembleRole()
+    const afterRestore = await run(message('restored','Send the final verdict.',{kind:'agent-message',form:'relay',senderSessionId:'parent'}))
+    assert.match(afterRestore,/Review only for correctness/)
+    assert.match(afterRestore,/Also check the second patch/)
+    assert.match(afterRestore,/Send the final verdict/)
+  })
+}
+
+test('a top-level external Agent turn keeps DSH-only messages out of ACP', async t => {
+  const {run,assembleRole} = await setup(t)
+  await assembleRole()
+  const input = message('user','Only this input.')
+  const relay = message('relay','Another agent message.',{kind:'agent-message',form:'relay',senderSessionId:'child'})
+  assert.equal(await run(input,relay),JSON.stringify(input.content))
+})
+
+test('a complete DSH child persona suppresses inactive role sections', async t => {
+  const {run,assembleRole} = await setup(t,{child:true})
+  await assembleRole(true)
+  const output = await run(message('task','Review the patch.'))
+  assert.match(output,/Review only for correctness/)
+  assert.doesNotMatch(output,/Lead with the verdict/)
 })
 
 test('a long-running tool reaches the idle reminder and finishes beyond the old turn limit', async t => {

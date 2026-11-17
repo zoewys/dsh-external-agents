@@ -13,8 +13,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.1.9.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.9.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.2.0.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.2.0.tgz"
 ```
 
 使用桌面发行版自带的 0.2.2-rc.3 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
@@ -50,6 +50,14 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.9.tgz"
 
 外部 Agent 通过本机只读 MCP 发现当前 DSH 会话的技能目录，再按名称读取所需技能的正文。`injectDshSkills` 控制这条自动读取路径。在 DSH 中手动选中技能时，DSH 会直接把该技能的正文放入当前回合。升级前建立的 ACP 会话在下一轮切换到按需加载，并带入 DSH 对话摘要；DSH 会话记录保留。
 
-登录凭证由 CLI 保管。思考过程、子代理派发和 TUI 属于后续范围。
+登录凭证由 CLI 保管。思考过程和 TUI 属于后续范围。
 
 外部 CLI 意外退出时，DSH 插件日志记录退出码或信号。启动失败和 CLI 标准错误输出中的已知错误码也会记录，日志只保留这些诊断字段。
+
+## 派发子智能体
+
+1. 在 DSH 的「子智能体 → 模型选择」设置中，开启「允许 Agent 为子智能体选择模型」，授权「外部 Agent」分组里的 Kimi Code 或 Codex 模型，然后新建会话。
+2. 在主会话使用带有原生子智能体工具的 DSH 智能体，要求它把任务派给指定的外部 Agent。派发沿用 DSH 的 `subagent` 工具、模型授权和角色预设。预设可由 DSH 部署允许选择，省略角色预设时沿用 DSH 自身的预设继承。
+3. 主会话用 `send_message` 向同一个子智能体继续发消息。子智能体可以在完成后被唤醒，DSH 会把每次完成的结果交回主会话。
+
+外部 Agent 收到子智能体预设中的角色指令和派发消息，按子会话的权限运行。需要额外权限或用户作答时，子智能体可在结果中说明限制，由主会话处理。DSH 技能仍按子会话的作用域读取，部署级 MCP 共享设置用于主会话。
