@@ -1,6 +1,6 @@
 {
   "name": "dsh-external-agents",
-  "version": "0.1.6",
+  "version": "0.1.9",
   "type": "module",
   "description": "Kimi Code and Codex in native DeepSeek Harness conversations over ACP",
   "main": "./dist/host/index.js",

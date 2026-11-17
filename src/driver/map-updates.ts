@@ -66,6 +66,7 @@ export function dshTools(agent: Agent, position: { turn: number; step: number },
   }
   return {
     receive,
+    get pending() { return [...calls.values()].some(call => !call.finished) },
     flush() { for (const call of calls.values()) if (!call.finished) result(call, true) },
   }
 }

@@ -2,7 +2,7 @@ import type {
   AgentCapabilities, ContentBlock, NewSessionRequest, CreateElicitationRequest, CreateElicitationResponse, RequestPermissionRequest,
   RequestPermissionResponse, SessionConfigOption, SessionNotification, ToolCallUpdate,
 } from '@agentclientprotocol/sdk/unstable'
-import { AcpError, connect, safeError, type AcpClient } from '../acp/client.ts'
+import { AcpConnectionLost, AcpError, connect, safeError, type AcpClient } from '../acp/client.ts'
 import type { Binding, bindingStore } from '../host/binding-store.ts'
 import { mcpPayload, type McpEntry } from '../host/injection.ts'
 import { startSkillServer, type SkillAccess } from '../host/skill-server.ts'
@@ -49,12 +49,15 @@ export class ExternalAgentDriver {
   private readonly probeCache = new Map<string, { at: number; result: Promise<{ readiness: Readiness; options: SessionConfigOption[] }> }>()
   private readonly shutdown = new AbortController()
   private readonly probes = new Set<ReturnType<ExternalAgentDriver['check']>>()
+  private readonly diagnostic?: (agent: AgentId, message: string) => void
 
   readonly config: Config
   readonly store: ReturnType<typeof bindingStore>
-  constructor(config: Config, store: ReturnType<typeof bindingStore>) {
+  constructor(config: Config, store: ReturnType<typeof bindingStore>,
+    diagnostic?: (agent: AgentId, message: string) => void) {
     this.config = config
     this.store = store
+    this.diagnostic = diagnostic
   }
 
   current(id: string) { return this.active.get(id) }
@@ -80,7 +83,9 @@ export class ExternalAgentDriver {
       this.shutdown.signal.throwIfAborted()
       const command = await resolveCommand(agent,config)
       if (!command) return { readiness: { status: 'not_installed' }, options: [] }
-      client = connect(command,cwd,childEnvironment(agent,config.codexTransport))
+      client = connect(command,cwd,childEnvironment(agent,config.codexTransport), {
+        diagnostic: message => this.diagnostic?.(agent,message),
+      })
       const init = await client.initialize(this.shutdown.signal)
       validateInit(init)
       canDelete = !!init.agentCapabilities?.sessionCapabilities?.delete
@@ -129,6 +134,7 @@ export class ExternalAgentDriver {
       let live: Live | undefined
       let skillServer: Live['skillServer']
       const client = connect(command,cwd,childEnvironment(agent,config.codexTransport), {
+        diagnostic: message => this.diagnostic?.(agent,message),
         update: event => {
           if (!live || event.sessionId !== live.binding.acpSessionId) return
           if (event.update.sessionUpdate === 'config_option_update') live.options = event.update.configOptions
@@ -327,7 +333,10 @@ export class ExternalAgentDriver {
     try {
       const result = await live.client.prompt({ sessionId: id, prompt: [
         ...live.context, ...input,
-      ] })
+      ] }).catch(error => {
+        if (!signal.aborted && live.client.closed) throw new AcpConnectionLost()
+        throw error
+      })
       if (live.pendingContextHandoff) signal.throwIfAborted()
       if (sentThrough) live.binding.sentThrough = sentThrough
       await this.save(live,true)

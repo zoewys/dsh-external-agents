@@ -54,6 +54,22 @@ for await (const line of input) {
       }
       send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:output}}}})
       reply(id,{stopReason:'end_turn'})
+    } else if (text === 'diagnostic-error') {
+      process.stderr.write('ENOTFOUND ENOTFOUND authorization: Bearer fixture-secret\nuntrusted stderr ECONN')
+      setTimeout(()=>{
+        process.stderr.write('RESET',()=>process.exit(23))
+      },30)
+    } else if (text === 'disconnect') {
+      process.exit(0)
+    } else if (text === 'hold-tool') {
+      const update = value => send({method:'session/update',params:{sessionId:params.sessionId,update:value}})
+      update({sessionUpdate:'tool_call',toolCallId:'slow-tool',title:'Long tool',kind:'execute',status:'in_progress'})
+      held=setTimeout(()=>{
+        held=undefined
+        update({sessionUpdate:'tool_call_update',toolCallId:'slow-tool',status:'completed'})
+        update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'tool finished'}})
+        reply(id,{stopReason:'end_turn'})
+      },380)
     } else if (text === 'hold-mode' || text === 'report-mode') {
       const chunk = text => send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})
       if (text === 'hold-mode') {

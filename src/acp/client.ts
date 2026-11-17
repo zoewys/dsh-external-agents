@@ -14,6 +14,10 @@ export class AcpError extends Error {
   }
 }
 
+export class AcpConnectionLost extends AcpError {
+  constructor() { super('外部 Agent 连接已断开。可在原会话继续。') }
+}
+
 export function safeError(error: unknown): AcpError {
   if (error instanceof AcpError) return error
   if (error instanceof RequestError) {
@@ -29,10 +33,11 @@ export interface Handlers {
   update?: (event: SessionNotification) => void
   permission?: (req: RequestPermissionRequest) => Promise<RequestPermissionResponse>
   question?: (req: CreateElicitationRequest) => Promise<CreateElicitationResponse>
+  diagnostic?: (message: string) => void
 }
 
 export function connect(command: Command, cwd: string, env: NodeJS.ProcessEnv, handlers: Handlers = {}) {
-  const child = startProcess(command, cwd, env)
+  const child = startProcess(command, cwd, env, handlers.diagnostic)
   const client = new ClientApp()
     .onNotification('session/update', ({ params }) => handlers.update?.(params))
     .onRequest('session/request_permission', async ({ params }) => await handlers.permission?.(params) ?? { outcome: { outcome: 'cancelled' } })
@@ -48,7 +53,7 @@ export function connect(command: Command, cwd: string, env: NodeJS.ProcessEnv, h
     get closed() { return client.signal.aborted },
     initialize: (signal?: AbortSignal) => client.agent.request<InitializeResponse>('initialize', {
       protocolVersion: PROTOCOL_VERSION,
-      clientInfo: { name: 'dsh-external-agents', version: '0.1.6' },
+      clientInfo: { name: 'dsh-external-agents', version: '0.1.9' },
       clientCapabilities: { elicitation: { form: {} }, plan: {} },
     }, time(signal, 45_000)),
     open: (params: NewSessionRequest, signal?: AbortSignal) =>

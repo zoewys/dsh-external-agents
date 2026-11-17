@@ -47,9 +47,20 @@ test('handoff excludes DSH instructions, reasoning, and raw tool output', () => 
 })
 
 test('handoff preserves the original remote task when reconnecting', () => {
-  const task = {role:'user',source:{kind:'dsh-remote-tasks',eventId:'job-1'},
+  const task = {id:'job-1',role:'user',source:{kind:'dsh-remote-tasks',eventId:'job-1'},
     content:[{type:'text',text:'Check the current build.'}]}
-  assert.match(summarize([task]),/Check the current build/)
+  const resume = {...task,id:'job-1:resume:1',content:[{type:'text',text:'Continue this task.'}]}
+  const supplement = {role:'user',source:{kind:'user'},content:[{type:'text',text:'Only validate the existing files.'}]}
+  const toolActivity = Array.from({length:50},()=>[
+    {role:'assistant',content:[{type:'tool-call',name:'bash'}]},
+    {role:'tool',content:[{type:'text',text:'tool output'}]},
+  ]).flat()
+  const longReply = {role:'assistant',content:[{type:'text',text:'progress '.repeat(2500)}]}
+  const summary = summarize([task,supplement,...toolActivity,resume,longReply])
+  assert.match(summary,/Check the current build/)
+  assert.match(summary,/Only validate the existing files/)
+  assert.ok(summary.length <= 32_000)
+  assert.doesNotMatch(summary,/tool output/)
 })
 
 test('handoff preserves the reply and drops obsolete skill preloading notices', () => {

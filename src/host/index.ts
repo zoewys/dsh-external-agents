@@ -5,7 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { LlmModelBadge, MessageId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionConfigOption, ContentBlock } from '@agentclientprotocol/sdk/unstable'
-import { AcpError, safeError } from '../acp/client.ts'
+import { AcpConnectionLost, AcpError, safeError } from '../acp/client.ts'
 import { isUserOrRemoteTaskInput, summarize, type Message } from '../driver/context.ts'
 import { ExternalAgentDriver, type Injection } from '../driver/external-agent-driver.ts'
 import { dshTools, planText } from '../driver/map-updates.ts'
@@ -52,6 +52,7 @@ interface UiState {
   commands?: string
   usage?: string
   pending?: boolean
+  idleWarning?: string
   notice?: string
   error?: string
   permissionWatch?: ReturnType<typeof watchPermissions>
@@ -87,9 +88,9 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       || ctx.agents.get(agent.id) !== agent || agent.model.current()?.provider !== request.provider) {
       throw new AcpError('外部 Agent 只接受当前 DSH 会话的用户回合。')
     }
-    const callerSignal = request.signal ?? new AbortController().signal
-    const deadline = AbortSignal.timeout(20 * 60_000)
-    const signal = AbortSignal.any([callerSignal,deadline])
+    const streamLifetime = new AbortController()
+    const signal = request.signal ? AbortSignal.any([request.signal,streamLifetime.signal]) : streamLifetime.signal
+    const idleMinutes = driver.config.idleWarningMinutes
     const {openTurnStartSeq,lastStepBoundary} = ctx.agents.turnBoundaryOf(agent.session)
     if (openTurnStartSeq === null || lastStepBoundary?.kind !== 'start') {
       throw new AcpError('外部 Agent 只能在 DSH 原生回合中运行。')
@@ -104,6 +105,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     state.notice = undefined
     state.error = undefined
     state.planText = undefined
+    state.idleWarning = undefined
     let delta = ''
     const queue: string[] = []
     const tools = dshTools(agent, position,{provider:request.provider,model:request.model})
@@ -119,6 +121,17 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     }
     let collected = false
     let permissionWatch: UiState['permissionWatch']
+    let idleTimer: NodeJS.Timeout | undefined
+    const activity = () => {
+      clearTimeout(idleTimer)
+      state.idleWarning = undefined
+      if (signal.aborted) return
+      idleTimer = setTimeout(() => {
+        if (signal.aborted) return
+        const waiting = state.pending ? '等待审批或回答' : tools.pending ? '等待外部工具返回' : '等待外部 Agent 回复'
+        state.idleWarning = idleMinutes + ' 分钟未收到新进展，' + waiting + '。'
+      }, idleMinutes * 60_000).unref()
+    }
     const run = (async () => {
       const session = agent.session
       const msgs = request.messages
@@ -183,10 +196,17 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         },
       })
       permissionWatch = state.permissionWatch = watch
+      let pendingInteractions = 0
       const pending = async <T>(op: () => Promise<T>) => {
+        pendingInteractions++
         state.pending = true
-        try { return await op() } finally { state.pending = false }
+        activity()
+        try { return await op() } finally {
+          state.pending = --pendingInteractions > 0
+          activity()
+        }
       }
+      activity()
       const result = await driver.prompt(live, {
         signal,
         update(update) {
@@ -201,6 +221,8 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
           }
           const plan = planText(update)
           if (plan !== undefined) state.planText = plan
+          if (update.sessionUpdate === 'agent_message_chunk' || update.sessionUpdate === 'agent_thought_chunk'
+            || update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update' || plan !== undefined) activity()
         },
         permission: (req,interactionSignal) => pending(() => approve(ctx,agent,req,interactionSignal,
           watch.approval,interactionSignal.aborted ? undefined : tools.receive(req.toolCall)?.id)),
@@ -213,11 +235,16 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         usage = {type:'usage',usage:{inputTokens:u.inputTokens,outputTokens:u.outputTokens,totalTokens:u.totalTokens}}
       }
     })().catch(error => {
-      if (!callerSignal.aborted) {
-        failed = deadline.aborted ? new AcpError('外部 Agent 回合超时，已停止。') : safeError(error)
-        state.error = (failed as Error).message
+      if (!signal.aborted) {
+        const failure = safeError(error)
+        state.error = failure.message
+        if (error instanceof AcpConnectionLost) {
+          finish = {type:'finish',reason:{kind:'error',failure:{code:'EXTERNAL_AGENT_CONNECTION_LOST',message:failure.message}}}
+        } else failed = failure
       }
     }).finally(() => {
+      clearTimeout(idleTimer)
+      state.idleWarning = undefined
       permissionWatch?.stop()
       if (state.permissionWatch === permissionWatch) state.permissionWatch = undefined
       try { tools.flush() } catch (error) { failed ??= safeError(error) }
@@ -232,12 +259,13 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         delta += addition
         yield {type:'text-delta',index:0,text:addition}
       }
-      callerSignal.throwIfAborted()
+      signal.throwIfAborted()
       if (failed) throw failed
       if (collected) yield {type:'block-end',index:0,block:{type:'text',text:delta}}
       if (usage) yield usage
       yield finish
     } finally {
+      streamLifetime.abort()
       await run
     }
   }
@@ -281,7 +309,8 @@ function collectInjection(ctx: Host, agent: Agent, config: ExternalAgentDriver['
 export function apply(ctx: Host, raw?: unknown) {
   const config = parseConfig(raw)
   const dir = join(process.env.DSH_HOME || join(homedir(),'.dsh'),'external-agents','bindings')
-  const driver = new ExternalAgentDriver(config,bindingStore(dir))
+  const driver = new ExternalAgentDriver(config,bindingStore(dir),
+    (agent,message) => ctx.logger.warn(profiles[agent].name + ' ACP: ' + message))
   const states = new Map<string, UiState>()
   ctx.llm.registerAdapter(agentEntries.map(id => routePrefix + id), nativeAdapter(ctx,driver,states))
   ctx.on('agent/disposed', ({ agent }) => {
@@ -326,7 +355,7 @@ export function apply(ctx: Host, raw?: unknown) {
         options: probe.options.map(option => ({id:option.id, name:option.name, category:option.category, type:option.type,
           currentValue:option.currentValue, choices:choices(option).map(({value,name})=>({value,name}))})),
         connected:!!live, running:agent.status === 'running', pending:state?.pending, plan:planMode(ctx,agent)?.get(agent).active ?? state?.plan ?? false, details:[state?.planText,state?.commands && '可用命令：' + state.commands,state?.usage].filter(Boolean).join('\n\n'),
-        notice:state?.notice,error:state?.error,
+        notice:state?.notice,idleWarning:state?.idleWarning,error:state?.error,
         permissionUpdate:permissionPause !== undefined ? 'paused' : state?.permissionDeferred ? 'next-turn' : undefined,
         permissionPause,
       }

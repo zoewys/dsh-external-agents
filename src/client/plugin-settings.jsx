@@ -2,7 +2,7 @@ import React, {useCallback,useState,useSyncExternalStore} from 'react'
 
 const packageName = 'dsh-external-agents'
 const sectionId = 'dsh-external-agents-settings'
-const fields = ['injectDshSkills','injectDshMcp','codexTransport']
+const fields = ['injectDshSkills','injectDshMcp','codexTransport','idleWarningMinutes']
 
 const styles = `
 .ea-settings{display:grid;gap:14px;color:var(--dsw-alias-label-primary);scroll-margin:18px}
@@ -12,7 +12,7 @@ const styles = `
 .ea-setting-row{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
 .ea-setting-row span{display:grid;gap:4px}
 .ea-setting-row input{accent-color:var(--dsw-alias-button-primary-fill)}
-.ea-setting-row select{max-width:52%;font:inherit;color:inherit;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:5px}
+.ea-setting-row select,.ea-setting-row input[type=number]{max-width:52%;font:inherit;color:inherit;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:5px}
 .ea-settings-footer{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .ea-settings-button{font:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;cursor:pointer;padding:6px 11px}
 .ea-settings-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
@@ -72,6 +72,11 @@ function SettingsPage({form}) {
             <option value="native">本机 Codex 配置</option>
             <option value="https">OpenAI HTTPS</option>
           </select></label>
+        <label className="ea-setting-row"><span>无进展提醒（分钟）<small>超过此时间未收到新进展时，在会话中显示等待状态。任务会继续运行。</small></span>
+          <input aria-label="无进展提醒（分钟）" type="number" min="1" max="120" step="1" required
+            value={values.idleWarningMinutes ?? 5} disabled={!editable}
+            onChange={event=>edit('idleWarningMinutes',event.target.value === '' ? '' : event.target.valueAsNumber)} />
+        </label>
         <div className="ea-settings-footer">
           <button type="submit" className="ea-settings-button ea-settings-save" disabled={!editable || changes.length === 0}>
             {saving ? '正在保存…' : '保存设置'}</button>

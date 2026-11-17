@@ -22,6 +22,7 @@ interface Config {
   injectDshSkills: boolean
   injectDshMcp: boolean
   codexTransport: 'https' | 'native'
+  idleWarningMinutes: number
   commandOverrides: Partial<Record<AgentId, Command>>
 }
 
@@ -36,7 +37,7 @@ function record(value: unknown): Record<string, unknown> {
 
 export function parseConfig(raw: unknown): Config {
   const data = record(raw ?? {})
-  const keys = ['injectDshSkills', 'injectDshMcp', 'commandOverrides','codexTransport']
+  const keys = ['injectDshSkills', 'injectDshMcp', 'commandOverrides','codexTransport','idleWarningMinutes','turnTimeoutMinutes']
   if (Object.keys(data).some(key => !keys.includes(key))) throw new Error('外部 Agent 配置含有未知字段。')
   const field = (key: string): unknown => {
     const value = data[key]
@@ -55,9 +56,17 @@ export function parseConfig(raw: unknown): Config {
     }
     return value ?? 'native'
   }
+  const idleWarning = () => {
+    const value = field('idleWarningMinutes') ?? 5
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 120) {
+      throw new Error('无进展提醒时间必须为 1 到 120 分钟的整数。')
+    }
+    return value
+  }
   enabled('injectDshSkills')
   enabled('injectDshMcp')
   transport()
+  idleWarning()
   const overrides: Config['commandOverrides'] = {}
   for (const [id, value] of Object.entries(record(data.commandOverrides ?? {}))) {
     const { command, args, ...extra } = record(value)
@@ -71,6 +80,7 @@ export function parseConfig(raw: unknown): Config {
     get injectDshSkills() { return enabled('injectDshSkills') },
     get injectDshMcp() { return enabled('injectDshMcp') },
     get codexTransport() { return transport() },
+    get idleWarningMinutes() { return idleWarning() },
     commandOverrides:overrides,
   }
 }

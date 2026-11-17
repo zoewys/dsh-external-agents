@@ -154,6 +154,7 @@ function HeaderAction({sessionId,useProjection,useSession,blankOnly=false}) {
       title={[view?.permission,status,view?.notice].filter(Boolean).join(' · ')}
       onClick={()=>{setOpen(true);void update()}}>{names[provider]} · {status}</button>
     {view?.permissionUpdate === 'next-turn' && <span className="ea-permission-status" role="status">新权限将在下一轮生效</span>}
+    {running && view?.idleWarning && <span className="ea-permission-status" role="status">{view.idleWarning}</span>}
     {paused && <button className="ea-button" type="button" disabled={busy}
       onClick={()=>void perform('resume',view.permissionPause)}>按新权限继续</button>}
     {paused && error && <span className="ea-permission-status" role="alert">{error}</span>}

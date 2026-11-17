@@ -13,8 +13,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.1.6.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.6.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.1.9.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.9.tgz"
 ```
 
 使用桌面发行版自带的 0.2.2-rc.3 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
@@ -29,7 +29,7 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.6.tgz"
 
 ## 配置与范围
 
-打开 **插件 → 外部 Agent → 设置**，可调整 DSH 技能共享、MCP 共享和 Codex 连接方式。保存后，受影响的 Agent 会话在下一轮使用新配置，并带入之前的对话摘要。模型菜单将 Kimi Code 和 Codex 放在带「外部 Agent」前缀的小组中，每个可选模型都有插件标签。
+打开 **插件 → 外部 Agent → 设置**，可调整 DSH 技能共享、MCP 共享、Codex 连接方式和无进展提醒。提醒默认 5 分钟，可设为 1 到 120 分钟，从下一轮生效。提醒显示正在等待工具、审批或回复，当前任务可以继续运行。活动回合由 Agent 完成、用户停止或实际连接关闭结束。连接断开后可在原 DSH 会话继续，交接优先保留原任务和用户补充要求。模型菜单将 Kimi Code 和 Codex 放在带「外部 Agent」前缀的小组中，每个可选模型都有插件标签。
 
 也可以通过 DSH profile patch 的 `external-agents` 条目配置：
 
@@ -39,6 +39,7 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.6.tgz"
     injectDshSkills: true
     injectDshMcp: true
     codexTransport: native
+    idleWarningMinutes: 5
 ```
 
 `commandOverrides` 可以为 `kimi-code` 或 `codex` 指定 `command` 和 `args`，用于非标准安装路径。
@@ -50,3 +51,5 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.1.6.tgz"
 外部 Agent 通过本机只读 MCP 发现当前 DSH 会话的技能目录，再按名称读取所需技能的正文。`injectDshSkills` 控制这条自动读取路径。在 DSH 中手动选中技能时，DSH 会直接把该技能的正文放入当前回合。升级前建立的 ACP 会话在下一轮切换到按需加载，并带入 DSH 对话摘要；DSH 会话记录保留。
 
 登录凭证由 CLI 保管。思考过程、子代理派发和 TUI 属于后续范围。
+
+外部 CLI 意外退出时，DSH 插件日志记录退出码或信号。启动失败和 CLI 标准错误输出中的已知错误码也会记录，日志只保留这些诊断字段。

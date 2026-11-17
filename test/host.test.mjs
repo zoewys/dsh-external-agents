@@ -2,12 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../src/host/index.ts'
 
-async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write' } = {}) {
+async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(),'dsh-remote-acp-'))
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = cwd
@@ -23,6 +24,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
   const provider = 'external-acp-' + agentKind
   const events = []
   const cancellations = []
+  const diagnostics = []
   const queued = []
   let route, listener, controller, turnBoundary, server
   let mode = permission
@@ -35,7 +37,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
   }
   const agent = {
     id:'external-session', status:'idle', inbox:{nextTurn:queued,nextStep:[]},
-    session:{id:'external-session',header:{cwd},get seq(){return events.length},eventAt:seq=>events[seq]},
+    session:{id:'external-session',header:{cwd},append,get seq(){return events.length},eventAt:seq=>events[seq]},
     model:{current:()=>({provider})}, ctx:{get:name=>name==='skills' ? registry : undefined},
     cancel(cause) { cancellations.push(cause); controller.abort(cause) },
     followup(msg) { queued.push(msg) },
@@ -47,6 +49,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
     sandboxPolicy:{resolve:()=>({mode})},
     permissionPresets:{current:()=>preset},
     approval:{overrideOf:()=>policy},
+    logger:{warn:message=>diagnostics.push(message)},
     webServer:{register:opts=>{route=opts.handler;return ()=>{}}}, connection:{requestRejection:()=>undefined},
     get:()=>undefined,on:(name,fn)=>{if(name==='session/event')listener=fn},
     effect:setup=>{dispose=setup()},
@@ -66,7 +69,8 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
     try {
       for await(const chunk of adapter.stream({provider,model:'one',sessionId:agent.id,messages,signal:controller.signal})) {
         if(chunk.type==='text-delta') onText?.(chunk.text)
-        if(chunk.type==='block-end') return chunk.block.text
+        if(captureFinish && chunk.type==='finish') return chunk.reason
+        if(!captureFinish && chunk.type==='block-end') return chunk.block.text
       }
     } finally {
       append('turn/end',{turn,reason:controller.signal.aborted ? {kind:'aborted',reason:controller.signal.reason} : {kind:'completed'}})
@@ -99,7 +103,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
         body:JSON.stringify({id:agent.id,action,...extra}),
       }).then(async res=>({ok:res.ok,body:await res.json()}))
     },
-    cancellations, queued,
+    cancellations, diagnostics, events, queued,
     stop: dispose,
   }
 }
@@ -109,6 +113,52 @@ test('the DSH adapter forwards a remote task to Codex over ACP', async t => {
   const task = message('job-1','Reply with a read-only health check.',{kind:'dsh-remote-tasks',eventId:'job-1'})
   const runtime = message('runtime','Host runtime context.',{kind:'runtime-context'})
   assert.equal(await run(task,runtime),JSON.stringify(task.content))
+})
+
+test('a long-running tool reaches the idle reminder and finishes beyond the old turn limit', async t => {
+  const setTimer = globalThis.setTimeout
+  t.mock.method(globalThis,'setTimeout',(callback,ms,...args)=>setTimer(callback,ms===120_000 ? 30 : ms,...args))
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  t.mock.method(AbortSignal,'timeout',ms=>timeout(ms===60_000 ? 100 : ms))
+  const {run,control,cancellations,events} = await setup(t,{config:{turnTimeoutMinutes:1,idleWarningMinutes:{get:()=>2}}})
+  const running = run(message('slow','hold-tool'))
+  let warning
+  for (let i = 0; i < 20 && !warning; i++) {
+    warning = (await control('status')).body.idleWarning
+    if (!warning) await delay(15)
+  }
+  assert.match(warning,/等待外部工具返回/)
+  assert.equal(await running,'tool finished')
+  const call = events.find(event => event.type === 'tool/call')
+  const result = events.find(event => event.type === 'tool/result')
+  assert.ok(call && result, 'the tool call and result are both written to the DSH session')
+  assert.equal(result.data.message.toolCallId,call.data.callId)
+  assert.equal(result.data.message.isError,false)
+  assert.equal((await control('status')).body.idleWarning,undefined)
+  assert.deepEqual(cancellations,[])
+})
+
+test('an ACP process exit emits a resumable disconnection and the next turn can run', async t => {
+  const {run,cancellations} = await setup(t,{captureFinish:true})
+  const first = await run(message('disconnect','disconnect'))
+  assert.equal(first.kind,'error')
+  assert.equal(first.failure.code,'EXTERNAL_AGENT_CONNECTION_LOST')
+  assert.equal((await run(message('next','report-mode'))).kind,'stop')
+  assert.deepEqual(cancellations,[])
+})
+
+test('DSH diagnostics retain known CLI failure codes without stderr contents', async t => {
+  const {run,diagnostics,events} = await setup(t,{captureFinish:true})
+  const finish = await run(message('diagnostics','diagnostic-error'))
+  assert.equal(finish.failure.code,'EXTERNAL_AGENT_CONNECTION_LOST')
+  // The transport can close before Node delivers the process exit event.
+  for (let i = 0; i < 20 && diagnostics.length < 3; i++) await delay(10)
+  assert.deepEqual([...diagnostics].sort(),[
+    'Codex ACP: CLI exited (code 23).',
+    'Codex ACP: CLI stderr reported ECONNRESET.',
+    'Codex ACP: CLI stderr reported ENOTFOUND.',
+  ])
+  assert.doesNotMatch(JSON.stringify(events),/fixture-secret|untrusted stderr/)
 })
 
 for (const agentKind of ['codex','kimi-code']) {
