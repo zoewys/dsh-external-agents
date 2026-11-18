@@ -11,7 +11,7 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 
 展示 ACP 接入、原生模型切换、Skills 与 MCP 共享，以及子智能体委派和结果回传。
 
-https://github.com/user-attachments/assets/69473b1f-ffd3-48fd-b1a2-d433acf6c885
+https://github.com/user-attachments/assets/5b5c7dfa-9c88-4b5d-8579-40edddd56f8f
 
 [下载 MP4（约 29 秒，静音）](https://raw.githubusercontent.com/zoewys/dsh-external-agents/main/docs/media/external-agents-demo.mp4)
 
