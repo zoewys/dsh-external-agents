@@ -9,11 +9,11 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 
 ## 演示视频
 
-在 DSH 原生模型菜单中选择 Kimi Code 或 Codex，并为子智能体授权可用的外部模型。
+在 DSH 原生会话使用 Kimi Code 或 Codex，并为子智能体配置允许使用的模型。
 
-<a href="https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo.mp4"><img src="https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo-cover.jpg" width="640" alt="播放 Nexture Team 与 External Agents 的 DSH 实录"></a>
+https://github.com/user-attachments/assets/52391634-4264-4991-81be-9e26f8dc4090
 
-[观看演示（MP4，44 秒）](https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo.mp4)
+[下载 MP4（27 秒）](https://raw.githubusercontent.com/zoewys/dsh-external-agents/main/docs/media/external-agents-demo.mp4)
 
 ## 安装
 
