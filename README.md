@@ -9,11 +9,11 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 
 ## 演示视频
 
-在 DSH 原生会话使用 Kimi Code 或 Codex，并为子智能体配置允许使用的模型。
+展示 ACP 接入、原生模型切换、Skills 与 MCP 共享，以及子智能体委派和结果回传。
 
-https://github.com/user-attachments/assets/dc6e4579-1716-428f-beeb-bd87a4abd8be
+https://github.com/user-attachments/assets/20c974a0-eac4-4465-8897-dbd4647ed26e
 
-[下载 MP4（14 秒，静音）](https://raw.githubusercontent.com/zoewys/dsh-external-agents/main/docs/media/external-agents-demo.mp4)
+[下载 MP4（约 45 秒，静音）](https://raw.githubusercontent.com/zoewys/dsh-external-agents/main/docs/media/external-agents-demo.mp4)
 
 ## 安装
 
