@@ -7,6 +7,14 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 - **复用 Skills 和 MCP** — 外部 Agent 可以按需读取当前会话的 Skills。主会话可共享允许转发且无需凭证的 MCP 服务。登录凭证由各自的 CLI 管理。
 - **派发外部子智能体** — 授权相应模型后，主 Agent 可以把任务交给 Kimi Code 或 Codex，按角色预设和子会话权限执行。同一个子智能体可以继续接收补充指令，完成结果会回到主会话。
 
+## 演示视频
+
+在 DSH 原生模型菜单中选择 Kimi Code 或 Codex，并为子智能体授权可用的外部模型。
+
+<a href="https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo.mp4"><img src="https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo-cover.jpg" width="640" alt="播放 Nexture Team 与 External Agents 的 DSH 实录"></a>
+
+[观看演示（MP4，44 秒）](https://raw.githubusercontent.com/zoewys/nexture-team-oss/main/docs/media/dsh-plugins-demo.mp4)
+
 ## 安装
 
 需要 Node.js 22+ 和 DSH 0.2.2-rc.3。确保本机 CLI 可执行，并先用 `kimi login` 或 `codex login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
