@@ -1,10 +1,15 @@
 import { createInterface } from 'node:readline'
+import { appendFile, mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 const input = createInterface({input:process.stdin})
 const reply = (id,result) => send({id,result})
 const send = data => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...data})+'\n')
 let current
 let skillEndpoint
 let held
+const quotaFixture = process.argv.includes('kimi-quota-log')
+const sessionId = quotaFixture ? 'session_'+randomUUID() : 'fake-'+process.pid
 const options = [
   {type:'select',id:'mode',category:'mode',name:'Mode',currentValue:'default',options:[
     {value:'default',name:'Default'},{value:'yolo',name:'YOLO'},{value:'workspace-write',name:'Workspace write'},{value:'agent-full-access',name:'Full access'},
@@ -20,7 +25,7 @@ for await (const line of input) {
     skillEndpoint = params.mcpServers.find(server=>server.name==='dsh_skills')?.url
     if (process.argv.includes('cold-model') && params.configOptions?.some(x=>x.configId==='model'&&x.value==='two')) options[1].currentValue='two'
     if (process.argv.includes('logged-out')) send({id,error:{code:-32000,message:'auth required'}})
-    else reply(id,{sessionId:'fake-'+process.pid,configOptions:options})
+    else reply(id,{sessionId,configOptions:options})
   } else if (method === 'session/resume') {
     if (process.argv.includes('no-resume')) send({id,error:{code:-32002,message:'not found'}})
     else {
@@ -53,6 +58,17 @@ for await (const line of input) {
         output = JSON.stringify(payload.result ?? payload.error)
       }
       send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:output}}}})
+      reply(id,{stopReason:'end_turn'})
+    } else if (quotaFixture && ['quota','stale-quota','empty'].includes(text)) {
+      if (text !== 'empty') {
+        const home = process.env.KIMI_CODE_HOME
+        const sessionDir = join(home,'sessions','fixture',params.sessionId)
+        await mkdir(join(sessionDir,'logs'),{recursive:true})
+        await appendFile(join(home,'session_index.jsonl'),JSON.stringify({sessionDir,sessionId:params.sessionId})+'\n')
+        const loggedAt = new Date(Date.now() - (text === 'stale-quota' ? 60_000 : 0)).toISOString()
+        await appendFile(join(sessionDir,'logs','kimi-code.log'),loggedAt+
+          ' WARN  llm request failed  turnStep=0.1 model=kimi-code/k3 errorName=APIProviderQuotaExhaustedError errorMessage="You reached your 5-hour usage limit. private-log-text" statusCode=429\n')
+      }
       reply(id,{stopReason:'end_turn'})
     } else if (text === 'diagnostic-error') {
       process.stderr.write('ENOTFOUND ENOTFOUND authorization: Bearer fixture-secret\nuntrusted stderr ECONN')

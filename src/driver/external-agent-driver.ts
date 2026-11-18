@@ -7,6 +7,7 @@ import type { Binding, bindingStore } from '../host/binding-store.ts'
 import { mcpPayload, type McpEntry } from '../host/injection.ts'
 import { startSkillServer, type SkillAccess } from '../host/skill-server.ts'
 import { childEnvironment, profiles, resolveCommand, type AgentId, type parseConfig } from '../host/profiles.ts'
+import { kimiQuotaError } from './kimi-quota.ts'
 import { choices, sessionOptions } from './options.ts'
 
 type Config = ReturnType<typeof parseConfig>
@@ -331,6 +332,7 @@ export class ExternalAgentDriver {
     let cancelTimer: NodeJS.Timeout | undefined
     signal.addEventListener('abort', stop, { once: true })
     try {
+      const startedAt = Date.now()
       const result = await live.client.prompt({ sessionId: id, prompt: [
         ...live.context, ...input,
       ] }).catch(error => {
@@ -342,7 +344,11 @@ export class ExternalAgentDriver {
       await this.save(live,true)
       live.pendingContextHandoff = false
       live.context = []
+      const quota = live.binding.agentId === 'kimi-code' && result.stopReason === 'end_turn'
+        ? await kimiQuotaError(id, startedAt)
+        : undefined
       signal.throwIfAborted()
+      if (quota) throw quota
       return result
     } finally {
       if (cancelTimer) clearTimeout(cancelTimer)

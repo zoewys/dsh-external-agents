@@ -11,12 +11,16 @@ import { apply } from '../src/host/index.ts'
 async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false, child = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(),'dsh-remote-acp-'))
   const previousHome = process.env.DSH_HOME
+  const previousKimiHome = process.env.KIMI_CODE_HOME
   process.env.DSH_HOME = cwd
+  if (args.includes('kimi-quota-log')) process.env.KIMI_CODE_HOME = join(cwd,'kimi')
   let dispose
   t.after(async () => {
     try { await dispose?.() } finally {
       if (previousHome === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previousHome
+      if (previousKimiHome === undefined) delete process.env.KIMI_CODE_HOME
+      else process.env.KIMI_CODE_HOME = previousKimiHome
       await rm(cwd,{recursive:true,force:true})
     }
   })
@@ -206,6 +210,18 @@ test('an ACP process exit emits a resumable disconnection and the next turn can 
   assert.equal(first.failure.code,'EXTERNAL_AGENT_CONNECTION_LOST')
   assert.equal((await run(message('next','report-mode'))).kind,'stop')
   assert.deepEqual(cancellations,[])
+})
+
+test('Kimi quota exhaustion is a typed failure even when ACP finishes with an empty end_turn', async t => {
+  const {run,control} = await setup(t,{agentKind:'kimi-code',child:true,captureFinish:true,args:['kimi-quota-log']})
+  assert.equal((await run(message('stale','stale-quota'))).kind,'stop')
+  const result = await run(message('quota','quota'))
+  assert.equal(result.kind,'error')
+  assert.equal(result.failure.code,'EXTERNAL_AGENT_QUOTA_EXHAUSTED')
+  assert.equal(result.failure.status,429)
+  assert.match(result.failure.message,/5 小时.*用量上限/)
+  assert.doesNotMatch(result.failure.message,/private-log-text/)
+  assert.match((await control('status')).body.error,/用量上限/)
 })
 
 test('DSH diagnostics retain known CLI failure codes without stderr contents', async t => {

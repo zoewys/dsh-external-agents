@@ -6,6 +6,7 @@ import type { LlmModelBadge, MessageId, ReasoningEffortId } from '@deepseek-ai/d
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionConfigOption, ContentBlock } from '@agentclientprotocol/sdk/unstable'
 import { AcpConnectionLost, AcpError, safeError } from '../acp/client.ts'
+import { KimiQuotaError } from '../driver/kimi-quota.ts'
 import { isDelegationMessage, isUserOrRemoteTaskInput, summarize, type Message } from '../driver/context.ts'
 import { ExternalAgentDriver, type Injection } from '../driver/external-agent-driver.ts'
 import { dshTools, planText } from '../driver/map-updates.ts'
@@ -246,7 +247,9 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       if (!signal.aborted) {
         const failure = safeError(error)
         state.error = failure.message
-        if (error instanceof AcpConnectionLost) {
+        if (error instanceof KimiQuotaError) {
+          finish = {type:'finish',reason:{kind:'error',failure:{code:'EXTERNAL_AGENT_QUOTA_EXHAUSTED',status:429,message:failure.message}}}
+        } else if (error instanceof AcpConnectionLost) {
           finish = {type:'finish',reason:{kind:'error',failure:{code:'EXTERNAL_AGENT_CONNECTION_LOST',message:failure.message}}}
         } else failed = failure
       }
