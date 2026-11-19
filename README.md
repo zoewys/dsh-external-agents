@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/5b5c7dfa-9c88-4b5d-8579-40edddd56f8f
 
 ## 安装
 
-需要 Node.js 22+ 和 DSH 0.2.2-rc.3。确保本机 CLI 可执行，并先用 `kimi login` 或 `codex login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
+需要 Node.js 22+ 和 DSH 0.2.2-rc.5。DSH 0.2.2-rc.3 可继续使用 External Agents 0.2.1。确保本机 CLI 可执行，并先用 `kimi login` 或 `codex login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
 
 按需安装到 Web 或桌面 profile。
 
@@ -26,11 +26,11 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.2.0.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.2.0.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.2.2.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.2.2.tgz"
 ```
 
-使用桌面发行版自带的 0.2.2-rc.3 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
+安装到桌面 profile 时，使用该桌面发行版自带的 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
 
 安装后，在 DSH 会话的模型菜单中选择「外部 Agent」分组里的 Kimi Code 或 Codex。首次使用某个 CLI 时，设置向导会给出官方安装和登录命令。完成后点击 **重新检测**，即可在原输入框开始对话。
 
