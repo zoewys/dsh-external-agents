@@ -66,7 +66,7 @@ test('Antigravity maps read-only to plan and keeps native approval requests in e
   assert.deepEqual(executionPermissions(ctx,agent,'antigravity',false),{mode:'plan',level:0,approval:'deny'})
 })
 
-test('Antigravity defers permission widening even when both presets use the same ACP mode', async () => {
+test('permission widening stays deferred without explicit support for same-mode approval updates', async () => {
   const {watchPermissions}=await import('../src/host/permission-update.ts')
   let current={mode:'default',level:1,approval:'ask'}
   let deferred=false
@@ -85,6 +85,36 @@ test('Antigravity defers permission widening even when both presets use the same
   assert.equal(paused,false)
   watch.stop()
 })
+
+test('a same-mode approval widening is tracked so a later downgrade still pauses', async () => {
+  const {watchPermissions}=await import('../src/host/permission-update.ts')
+  let current={mode:'default',level:1,approval:'ask'}
+  let paused=false
+  let deferred=false
+  const watch=watchPermissions({initial:current,read:()=>current,widenSameMode:true,signal:new AbortController().signal,
+    deferred:value=>{deferred=value},pause:()=>{paused=true}})
+  current={mode:'default',level:2,approval:'allow'}
+  watch.schedule()
+  await Promise.resolve()
+  assert.equal(watch.approval(),'allow')
+  assert.equal(deferred,false)
+  current={mode:'default',level:1,approval:'ask'}
+  assert.equal(watch.approval(),'ask','a downgrade clamps approval before the queued update')
+  watch.schedule()
+  await Promise.resolve()
+  assert.equal(paused,true)
+  watch.stop()
+})
+
+test('a pending manual rejection stays rejected when permissions widen before its answer returns', async () => {
+  const {approve}=await import('../src/host/interactions.ts')
+  let permission='ask'
+  const ctx={approval:{async request(){permission='allow';return 'rejected'}}}
+  const req={toolCall:{title:'A pending tool'},options:[{kind:'allow_once',optionId:'yes'},{kind:'reject_once',optionId:'no'}]}
+  const result=await approve(ctx,{session:{header:{}}},req,new AbortController().signal,()=>permission)
+  assert.equal(result.outcome.optionId,'no')
+})
+
 test('handoff excludes DSH instructions, reasoning, and raw tool output', () => {
   const data = [
     {role:'user',source:{kind:'user'},content:[{type:'text',text:'Fix x'}]},

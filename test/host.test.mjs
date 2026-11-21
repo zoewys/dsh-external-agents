@@ -31,6 +31,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
   const cancellations = []
   const diagnostics = []
   const queued = []
+  const approvalRequests = []
   let route, listener, assemble, systemPrompt, disposeAgent, controller, turnBoundary, server
   let mode = permission
   let preset = permission
@@ -55,7 +56,10 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
     llm:{registerAdapter:(_providers,value)=>{adapter=value}},
     sandboxPolicy:{resolve:()=>({mode})},
     permissionPresets:{current:()=>preset},
-    approval:{overrideOf:()=>policy},
+    approval:{overrideOf:()=>policy,async request(request) {
+      approvalRequests.push({policy,toolName:request.toolName})
+      return 'rejected'
+    }},
     logger:{warn:message=>diagnostics.push(message)},
     webServer:{register:opts=>{route=opts.handler;return ()=>{}}}, connection:{requestRejection:()=>undefined},
     get:()=>undefined,on(name,fn) {
@@ -110,6 +114,33 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
     cwd, setWorkingDirectory:directory=>{workingDirectory=directory},
     catalog:async()=>({provider:adapter.providerInfo(provider),models:await adapter.listModels(provider)}),
     runWith,
+    async runSteps(steps) {
+      const turn=(turnBoundary?.lastTurn??0)+1
+      const start=append('turn/start',{turn})
+      controller=new AbortController()
+      agent.status='running'
+      const results=[]
+      try {
+        for (const [index,{messages,onText}] of steps.entries()) {
+          const step=append('step/start',{turn,step:index+1})
+          turnBoundary={openTurnStartSeq:start.seq,lastStepBoundary:{kind:'start',seq:step.seq},lastTurn:turn}
+          for(const msg of messages) append('user/message',msg)
+          const result={text:'',finish:undefined}
+          const history=events.filter(event=>event.type==='user/message').map(event=>event.data)
+          for await(const chunk of adapter.stream({provider,model,sessionId:agent.id,messages:history,signal:controller.signal})) {
+            if(chunk.type==='text-delta') {result.text+=chunk.text;onText?.(chunk.text)}
+            if(chunk.type==='finish') result.finish=chunk.reason
+          }
+          append('step/end',{turn,step:index+1})
+          results.push(result)
+        }
+        return results
+      } finally {
+        append('turn/end',{turn,reason:controller.signal.aborted?{kind:'aborted',reason:controller.signal.reason}:{kind:'completed'}})
+        agent.status='idle'
+        turnBoundary.openTurnStartSeq=null
+      }
+    },
     permissions(next) {
       preset=next
       listener(agent.session,append('permission/preset',{preset}))
@@ -130,7 +161,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
         body:JSON.stringify({id:agent.id,action,...extra}),
       }).then(async res=>({ok:res.ok,body:await res.json()}))
     },
-    cancellations, diagnostics, events, queued,
+    cancellations, diagnostics, events, queued, approvalRequests,
     stop: dispose,
   }
 }
@@ -435,6 +466,50 @@ test('widening Kimi permissions during generation applies to the same turn', asy
   assert.match(reply,/started:default/)
   assert.match(reply,/finished:yolo/)
   assert.deepEqual(cancellations,[])
+})
+
+test('Antigravity adopts full-access approval in default mode before its next tool request', async t => {
+  const {runWith,permissions,approvalRequests,control}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity','reject-live-mode']})
+  const result=await runWith(text=>{
+    if(text.includes('started:')) permissions('danger-full-access')
+  },message('open','hold-approval'))
+  assert.match(result,/approval:yes/)
+  assert.deepEqual(approvalRequests,[],'a stale ask must not reach the now-never DSH policy')
+  assert.equal((await control('status')).body.permissionUpdate,undefined)
+})
+
+test('Antigravity treats the native permission-only next step as administrative and still accepts user follow-ups', async t => {
+  const {runSteps,permissions,control}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity']})
+  const steps=await runSteps([
+    {messages:[message('task','hold-mode')],onText:text=>{if(text.includes('started:')) permissions('danger-full-access')}},
+    {messages:[message('policy','Policy changed.',{kind:'user-approval'}),message('runtime','Runtime data.',{kind:'runtime-context'})]},
+    {messages:[message('followup','The actual follow-up.'),message('policy-again','Policy metadata.',{kind:'user-approval'})]},
+  ])
+  assert.equal(steps[1].text,'')
+  assert.equal(steps[1].finish.kind,'stop')
+  assert.deepEqual(JSON.parse(steps[2].text),message('followup','The actual follow-up.').content)
+  assert.equal((await control('status')).body.error,undefined)
+})
+
+test('permission metadata cannot turn a remote Antigravity task into an accepted prompt', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity']})
+  await assert.rejects(run(message('policy','Policy changed.',{kind:'user-approval'}),
+    message('remote','Automated task.',{kind:'dsh-remote-tasks'})),/仅支持.*直接/)
+})
+
+test('Antigravity still defers a widening that requires changing its CLI mode', async t => {
+  const {runWith,permissions,control,run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],permission:'read-only'})
+  const result=await runWith(text=>{if(text.includes('started:')) permissions('danger-full-access')},message('plan','hold-mode'))
+  assert.match(result,/finished:plan/)
+  assert.equal((await control('status')).body.permissionUpdate,'next-turn')
+  assert.equal(await run(message('next','report-mode')),'default')
+})
+
+test('Antigravity stops a full-access turn when permissions are tightened in the same CLI mode', async t => {
+  const {runWith,permissions,cancellations,control}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],permission:'danger-full-access'})
+  await assert.rejects(runWith(text=>{if(text.includes('started:')) permissions('workspace-write')},message('full','hold-mode')),{kind:'hook'})
+  assert.equal(cancellations.length,1)
+  assert.equal((await control('status')).body.permissionUpdate,'paused')
 })
 
 test('widening Codex permissions during generation takes effect at the next turn', async t => {

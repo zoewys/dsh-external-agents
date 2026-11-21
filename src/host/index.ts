@@ -150,13 +150,21 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       const msgs = request.messages
       // Only these durable, current-step events can introduce new ACP input.
       const currentIds = new Set<string>()
+      const stepMessages: Message[] = []
       for (let n = session.seq - 1; n > stepSeq; n--) {
         const event = session.eventAt(n as typeof stepSeq)
-        if (event?.type === 'user/message' && accepts(event.data)) currentIds.add(event.data.id)
+        if (event?.type !== 'user/message') continue
+        stepMessages.push(event.data)
+        if (accepts(event.data)) currentIds.add(event.data.id)
       }
       const input = msgs.filter(message => message.id && currentIds.has(message.id) && accepts(message))
       if (!input.length) {
-        if (id === 'antigravity') throw new AcpError('Antigravity 当前仅支持用户直接发送的消息和手动调用技能。')
+        // DSH may schedule a step solely to publish a permission-policy change.
+        // It is administrative: do not forward it or replay the previous task.
+        const permissionOnly = stepMessages.some(message => message.source?.kind === 'user-approval')
+          && stepMessages.every(message => message.role === 'user'
+            && ['user-approval','runtime-context','agent-instructions','skill-catalog'].includes(message.source?.kind ?? ''))
+        if (id === 'antigravity' && !permissionOnly) throw new AcpError('Antigravity 当前仅支持用户直接发送的消息和手动调用技能。')
         return
       }
       state.permissionDeferred = false
@@ -206,6 +214,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       const watch = watchPermissions({
         initial:permissions, read:readPermissions, signal,
         widen:id === 'kimi-code' ? mode => driver.syncMode(live,mode,signal) : undefined,
+        widenSameMode:id === 'antigravity',
         deferred:value=>{state.permissionDeferred = value},
         pause() {
           try { agent.cancel({kind:'hook',reason:permissionPauseReason},{keepInbox:true}) }

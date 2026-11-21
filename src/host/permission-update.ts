@@ -21,6 +21,7 @@ export function watchPermissions(options: {
   initial: Permissions
   read(): Permissions
   widen?: (mode: string) => Promise<void>
+  widenSameMode?: boolean
   pause(): void
   deferred(value: boolean): void
   signal: AbortSignal
@@ -48,6 +49,14 @@ export function watchPermissions(options: {
       }
       if (updating) return
       if (next.mode === applied.mode && next.level === applied.level && next.approval === applied.approval) {
+        applied = next
+        options.deferred(false)
+        return
+      }
+      // Some agents keep one CLI mode and leave individual approvals to DSH.
+      // The user's new preset can apply without changing that CLI mode.
+      if (options.widenSameMode && next.mode === applied.mode) {
+        highestSentLevel = Math.max(highestSentLevel,next.level)
         applied = next
         options.deferred(false)
         return

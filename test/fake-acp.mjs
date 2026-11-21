@@ -9,6 +9,7 @@ let current
 let skillEndpoint
 let sessionCwd
 let held
+let reportApproval=false
 const quotaFixture = process.argv.includes('kimi-quota-log')
 const sessionId = quotaFixture ? 'session_'+randomUUID() : 'fake-'+process.pid
 const options = [
@@ -99,6 +100,15 @@ for await (const line of input) {
     } else if (text === 'report-cwd') {
       send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({processCwd:process.cwd(),sessionCwd})}}}})
       reply(id,{stopReason:'end_turn'})
+    } else if (text === 'hold-approval') {
+      reportApproval=true
+      send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'started:'+options[0].currentValue+'\n'}}}})
+      held=setTimeout(()=>{
+        held=undefined
+        send({id:999,method:'session/request_permission',params:{sessionId:params.sessionId,
+          toolCall:{toolCallId:'after-widen',title:'Approval after widening',kind:'execute',status:'pending'},
+          options:[{kind:'allow_once',optionId:'yes',name:'Yes'},{kind:'reject_once',optionId:'no',name:'No'}]}})
+      },120)
     } else if (text === 'hold-mode' || text === 'report-mode') {
       const chunk = text => send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})
       if (text === 'hold-mode') {
@@ -125,6 +135,11 @@ for await (const line of input) {
     reply(current,{stopReason:'cancelled'})
   }
   else if (method === 'session/close' || method === 'session/delete') reply(id,{})
+  else if (id === 999 && reportApproval) {
+    reportApproval=false
+    send({method:'session/update',params:{sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'approval:'+(result?.outcome?.optionId??'cancelled')}}}})
+    reply(current,{stopReason:'end_turn'})
+  }
   else if (id === 999 && result?.outcome?.optionId === 'no') reply(current,{stopReason:'end_turn'})
   else if (id != null) send({id,error:{code:-32601,message:'unknown'}})
 }

@@ -26,8 +26,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.1.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.1.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.2.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.2.tgz"
 ```
 
 安装到桌面 profile 时，使用该桌面发行版自带的 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
@@ -40,7 +40,7 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.1.tgz"
 
 在模型菜单选择「外部 Agent · Antigravity」，可使用账号提供的 Gemini 模型，并调整推理等级。自定义 ACP 客户端的合作方模型可用性受 Google 限制，插件只列出 Gemini 模型。支持用户直接聊天、手动调用技能和 DSH 原生子智能体派发；子智能体可接收父会话的补充消息，完成结果由 DSH 回传。定时投递和 Remote Tasks 仍不接受。
 
-受限会话使用 Antigravity 的 `default` 模式，在 DSH 中处理审批；完全放开时由 DSH 自动应答单次审批，仍保留 CLI 自身的权限规则。只读或「仅规划」使用 `plan` 模式并拒绝执行审批。权限放宽在下一轮生效，收紧时暂停当前回合。支持原 ACP 会话恢复、图片和可转发的 MCP，按对方实际能力启用。
+受限会话使用 Antigravity 的 `default` 模式，在 DSH 中处理审批；完全放开时由 DSH 自动应答单次审批，仍保留 CLI 自身的权限规则。只读或「仅规划」使用 `plan` 模式并拒绝执行审批。在同一 `default` 模式下，从「工作区内修改」切到「完全权限」会即时更新后续审批；需要从 `plan` 切换到 `default` 的放宽仍在下一轮生效，收紧时暂停当前回合。DSH 单独投递的权限通知会正常结束该步骤，不会重发原任务。支持原 ACP 会话恢复、图片和可转发的 MCP，按对方实际能力启用。
 
 参考：[官方 ACP 接入](https://antigravity.google/docs/ide/extensions/acp)、[Google 使用范围说明](https://antigravity.google/docs/faq)。DSH 子智能体派发属于本插件的集成功能；Google 文档未明确说明个人订阅通过第三方 ACP 客户端自动派发的支持范围，插件不保证该使用方式获得 Google 官方支持。
 
