@@ -24,8 +24,11 @@ export type TurnApproval = 'deny' | 'ask' | 'allow'
 export function executionPermissions(ctx: Host, agent: Agent, id: AgentId, plan: boolean) {
   const permission = sessionPermissions(ctx, agent)
   const level = plan || permission.mode === 'read-only' ? 0 : permission.posture === 'full_open' ? 2 : 1
-  const modes = id === 'codex' ? ['read-only','workspace-write','agent-full-access'] : ['plan','default','yolo']
-  const approval: TurnApproval = plan ? 'deny' : permission.posture === 'full_open' ? 'allow'
+  // Antigravity keeps requesting approval in default mode; DSH decides whether
+  // to ask or allow. It has no Kimi-style yolo mode.
+  const modes = id === 'codex' ? ['read-only','workspace-write','agent-full-access']
+    : id === 'antigravity' ? ['plan','default','default'] : ['plan','default','yolo']
+  const approval: TurnApproval = plan || (id === 'antigravity' && level === 0) ? 'deny' : permission.posture === 'full_open' ? 'allow'
     : permission.policy === 'never' || isDelegatedChild(agent) ? 'deny' : 'ask'
   return { mode:modes[level], level, approval }
 }

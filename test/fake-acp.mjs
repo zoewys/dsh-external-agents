@@ -17,6 +17,11 @@ const options = [
   ]},
   {type:'select',id:'model',category:'model',name:'Model',currentValue:'one',options:[{value:'one',name:'One'},{value:'two',name:'Two'}]},
 ]
+if (process.argv.includes('antigravity')) {
+  options[0].options=options[0].options.filter(option=>['plan','default'].includes(option.value))
+  options[1].currentValue=process.argv.includes('partner-default')?'claude-test':'gemini-test'
+  options[1].options=[{value:'gemini-test',name:'Gemini Test'},{value:'gemini-next',name:'Gemini Next'},{value:'claude-test',name:'Claude Test'}]
+}
 for await (const line of input) {
   const {id,method,params,result} = JSON.parse(line)
   if (method === 'initialize') {

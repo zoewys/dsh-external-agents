@@ -2,7 +2,7 @@ import React, {useEffect,useRef,useState} from 'react'
 import { registerPluginSettings } from './plugin-settings.jsx'
 
 const base = './api/dsh-external-agents'
-const names = {'external-acp-kimi-code':'Kimi Code','external-acp-codex':'Codex'}
+const names = {'external-acp-kimi-code':'Kimi Code','external-acp-codex':'Codex','external-acp-antigravity':'Antigravity'}
 let nonceRequest
 
 async function control(body) {
@@ -83,6 +83,7 @@ function Dialog({view,error,busy,close,retry,setOption}) {
         </div>
       </div>
     </div> : <div className="ea-main ea-controls">
+      {view.agent === 'antigravity' && <p>使用本机 Google 登录和订阅额度。当前仅支持直接聊天。</p>}
       <p>当前模型：{model?.choices.find(o=>o.value === (view.model === '@default' ? model.currentValue : view.model))?.name ?? view.model}</p>
       {mode && <p>运行模式随 DSH 权限：{mode.choices.find(o=>o.value === mode.currentValue)?.name ?? mode.currentValue}</p>}
       {planAvailable && <label>仅规划 <input type="checkbox" checked={view.plan} disabled={busy || view.running || view.delegated}

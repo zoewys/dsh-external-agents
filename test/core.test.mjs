@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { childEnvironment, parseConfig } from '../src/host/profiles.ts'
+import { childEnvironment, parseConfig, resolveCommand } from '../src/host/profiles.ts'
 import { permissionChoice, posture } from '../src/host/permissions.ts'
 import { mcpPayload } from '../src/host/injection.ts'
 import { summarize } from '../src/driver/context.ts'
@@ -32,6 +32,58 @@ test('new Codex sessions use the local provider by default and honor explicit HT
   const httpsConfig = JSON.parse(childEnvironment('codex',parseConfig({codexTransport:'https'}).codexTransport).CODEX_CONFIG)
   assert.equal(httpsConfig.model_provider,'dsh-openai-http')
   assert.equal(httpsConfig.model_providers['dsh-openai-http'].supports_websockets,false)
+})
+
+test('Antigravity has its own ACP route and accepts a custom executable', async () => {
+  const command = {command:process.execPath,args:['acp','--process-per-session']}
+  const config = parseConfig({commandOverrides:{antigravity:command}})
+  assert.deepEqual(await resolveCommand('antigravity',config),command)
+})
+
+test('Antigravity reuses local Google login without inherited API or Cloud credentials', t => {
+  const keys = ['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_GENAI_USE_GCA','GOOGLE_APPLICATION_CREDENTIALS']
+  const before = Object.fromEntries(keys.map(key=>[key,process.env[key]]))
+  t.after(()=>{for(const key of keys) {
+    if(before[key]===undefined) delete process.env[key]
+    else process.env[key]=before[key]
+  }})
+  for(const key of keys) process.env[key]='inherited-test-value'
+  const env = childEnvironment('antigravity','native')
+  for(const key of keys) assert.equal(env[key],undefined,key)
+  assert.equal(childEnvironment('kimi-code','native').GEMINI_API_KEY,'inherited-test-value')
+})
+
+test('Antigravity maps read-only to plan and keeps native approval requests in executable modes', async () => {
+  const {executionPermissions} = await import('../src/host/interactions.ts')
+  let mode='workspace-write'
+  const ctx={sandboxPolicy:{resolve:()=>({mode})},approval:{overrideOf:()=>mode==='danger-full-access'?'never':'ask'},permissionPresets:{current:()=>mode}}
+  const agent={session:{header:{}}}
+  assert.deepEqual(executionPermissions(ctx,agent,'antigravity',false),{mode:'default',level:1,approval:'ask'})
+  mode='danger-full-access'
+  assert.deepEqual(executionPermissions(ctx,agent,'antigravity',false),{mode:'default',level:2,approval:'allow'})
+  assert.deepEqual(executionPermissions(ctx,agent,'antigravity',true),{mode:'plan',level:0,approval:'deny'})
+  mode='read-only'
+  assert.deepEqual(executionPermissions(ctx,agent,'antigravity',false),{mode:'plan',level:0,approval:'deny'})
+})
+
+test('Antigravity defers permission widening even when both presets use the same ACP mode', async () => {
+  const {watchPermissions}=await import('../src/host/permission-update.ts')
+  let current={mode:'default',level:1,approval:'ask'}
+  let deferred=false
+  let paused=false
+  const watch=watchPermissions({initial:current,read:()=>current,signal:new AbortController().signal,
+    deferred:value=>{deferred=value},pause:()=>{paused=true}})
+  current={mode:'default',level:2,approval:'allow'}
+  watch.schedule()
+  await Promise.resolve()
+  assert.equal(deferred,true)
+  assert.equal(watch.approval(),'ask')
+  current={mode:'default',level:1,approval:'ask'}
+  watch.schedule()
+  await Promise.resolve()
+  assert.equal(deferred,false)
+  assert.equal(paused,false)
+  watch.stop()
 })
 test('handoff excludes DSH instructions, reasoning, and raw tool output', () => {
   const data = [

@@ -1,4 +1,5 @@
 import type { NewSessionResponse, SessionConfigOption } from '@agentclientprotocol/sdk/unstable'
+import type { AgentId } from '../host/profiles.ts'
 type LegacyModel = { modelId: string; name: string; description?: string }
 type LegacyModels = { currentModelId: string; availableModels: LegacyModel[] }
 type SessionInfo = Omit<NewSessionResponse, 'sessionId'> & { models?: LegacyModels | null }
@@ -7,7 +8,7 @@ export function choices(option: SessionConfigOption) {
   return option.type === 'select' ? option.options.flatMap(item => 'options' in item ? item.options : [item]) : []
 }
 
-export function sessionOptions(info: SessionInfo | undefined): SessionConfigOption[] {
+export function sessionOptions(info: SessionInfo | undefined, agent?: AgentId): SessionConfigOption[] {
   const options = [...info?.configOptions ?? []]
   const models = info?.models
   if (models && !options.some(item => item.category === 'model')) {
@@ -19,5 +20,7 @@ export function sessionOptions(info: SessionInfo | undefined): SessionConfigOpti
     options.push({ type: 'select', category: 'mode', id: '@mode', name: 'Mode', currentValue: modes.currentModeId,
       options: modes.availableModes.map(({id, name, description}) => ({value:id,name,description})) })
   }
-  return options
+  // Google currently offers partner models only to selected ACP clients.
+  return agent === 'antigravity' ? options.map(option => option.category === 'model' && option.type === 'select'
+    ? {...option,options:choices(option).filter(choice=>choice.value.startsWith('gemini-'))} : option) : options
 }

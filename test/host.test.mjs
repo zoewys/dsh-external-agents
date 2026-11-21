@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../src/host/index.ts'
 
-async function setup(t, { agentKind = 'codex', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false, child = false } = {}) {
+async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false, child = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(),'dsh-remote-acp-'))
   const previousHome = process.env.DSH_HOME
   const previousKimiHome = process.env.KIMI_CODE_HOME
@@ -78,7 +78,7 @@ async function setup(t, { agentKind = 'codex', registry, args = [], config = {},
     agent.status='running'
     try {
       const requestMessages = [...(systemPrompt ? [systemPrompt] : []),...history,...messages]
-      for await(const chunk of adapter.stream({provider,model:'one',sessionId:agent.id,messages:requestMessages,signal:controller.signal})) {
+      for await(const chunk of adapter.stream({provider,model,sessionId:agent.id,messages:requestMessages,signal:controller.signal})) {
         if(chunk.type==='text-delta') onText?.(chunk.text)
         if(captureFinish && chunk.type==='finish') return chunk.reason
         if(!captureFinish && chunk.type==='block-end') return chunk.block.text
@@ -137,6 +137,40 @@ test('the DSH adapter forwards a remote task to Codex over ACP', async t => {
   const task = message('job-1','Reply with a read-only health check.',{kind:'dsh-remote-tasks',eventId:'job-1'})
   const runtime = message('runtime','Host runtime context.',{kind:'runtime-context'})
   assert.equal(await run(task,runtime),JSON.stringify(task.content))
+})
+
+test('Antigravity appears in the native menu with only Gemini models and chats with default permissions', async t => {
+  const {run,catalog}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],permission:'danger-full-access'})
+  const menu=await catalog()
+  assert.equal(menu.provider.name,'外部 Agent · Antigravity')
+  assert.deepEqual(menu.models.map(model=>model.id),['@default','gemini-test','gemini-next'])
+  assert.equal(await run(message('mode','report-mode')),'default')
+  assert.equal(await run(message('next','Hello Google.')),JSON.stringify(message('next','Hello Google.').content))
+})
+
+test('Antigravity keeps plan permissions for a read-only DSH conversation', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],permission:'read-only'})
+  assert.equal(await run(message('plan','report-mode')),'plan')
+})
+
+test('Antigravity selects Gemini when its cached CLI default is a partner model', async t => {
+  const {run,control}=await setup(t,{agentKind:'antigravity',model:'@default',args:['antigravity','partner-default']})
+  await run(message('hello','Hello Google.'))
+  const state=(await control('status')).body
+  assert.equal(state.options.find(option=>option.category==='model').currentValue,'gemini-test')
+})
+
+test('Antigravity rejects subagent delegation before starting a model turn', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],child:true})
+  await assert.rejects(run(message('task','Run a delegated task.')),/仅支持.*直接聊天/)
+})
+
+test('Antigravity rejects automated remote tasks and schedules while allowing manual skill invocation', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity']})
+  await assert.rejects(run(message('remote','Automated task.',{kind:'dsh-remote-tasks'})),/仅支持.*直接/)
+  await assert.rejects(run(message('timer','[SCHEDULE REMINDER]\nAutomated task.',{kind:'schedule'})),/仅支持.*直接/)
+  const skill=message('skill','Manually selected skill body.',{kind:'skill-invocation'})
+  assert.deepEqual(JSON.parse(await run(skill)).slice(-1),skill.content)
 })
 
 for (const agentKind of ['kimi-code','codex']) {

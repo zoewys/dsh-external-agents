@@ -93,7 +93,10 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       throw new AcpError('外部 Agent 只接受当前 DSH 会话的用户回合。')
     }
     const delegated = isDelegatedChild(agent)
-    const accepts = (message: Message) => isExplicitInput(message) || (delegated && isDelegationMessage(message))
+    if (id === 'antigravity' && delegated) throw new AcpError('Antigravity 当前仅支持用户直接聊天，不支持子智能体派发。')
+    const accepts = (message: Message) => id === 'antigravity'
+      ? message.role === 'user' && ['user','skill-invocation'].includes(message.source?.kind ?? '')
+      : isExplicitInput(message) || (delegated && isDelegationMessage(message))
     const streamLifetime = new AbortController()
     const signal = request.signal ? AbortSignal.any([request.signal,streamLifetime.signal]) : streamLifetime.signal
     const idleMinutes = driver.config.idleWarningMinutes
@@ -148,7 +151,10 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
         if (event?.type === 'user/message' && accepts(event.data)) currentIds.add(event.data.id)
       }
       const input = msgs.filter(message => message.id && currentIds.has(message.id) && accepts(message))
-      if (!input.length) return
+      if (!input.length) {
+        if (id === 'antigravity') throw new AcpError('Antigravity 当前仅支持用户直接发送的消息和手动调用技能。')
+        return
+      }
       state.permissionDeferred = false
       const firstCurrent = msgs.findIndex(message => message.id && currentIds.has(message.id))
       let nativeIntervened = false

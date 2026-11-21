@@ -14,6 +14,11 @@ export const profiles = {
     install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
     login: 'codex login',
   },
+  antigravity: {
+    name: 'Antigravity', cli: 'agy',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    login: 'agy acp --login',
+  },
 } as const
 
 export type AgentId = keyof typeof profiles
@@ -107,6 +112,7 @@ export async function resolveCommand(id: AgentId, config: Config): Promise<Comma
   const cli = await locate(profiles[id].cli)
   if (!cli) return undefined
   if (id === 'kimi-code') return { command: cli, args: ['acp'] }
+  if (id === 'antigravity') return { command: cli, args: ['acp','--process-per-session'] }
   const acp = await locate('codex-acp')
   if (acp) return { command: acp, args: [] }
   const npx = await locate('npx')
@@ -117,6 +123,12 @@ export function childEnvironment(id: AgentId, transport: Config['codexTransport'
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: executablePath }
   delete env.ELECTRON_RUN_AS_NODE
   delete env.NODE_OPTIONS
+  if (id === 'antigravity') {
+    // This route uses the CLI's saved Google login and subscription quota.
+    for (const key of ['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_GENAI_USE_GCA','GOOGLE_APPLICATION_CREDENTIALS']) {
+      delete env[key]
+    }
+  }
   if (id === 'codex') {
     // Do not inherit an ACP shell's gateway/approval overrides. Local CLI login remains in CODEX_HOME.
     delete env.CODEX_CONFIG

@@ -1,6 +1,6 @@
 # External Agents（外部 Agent）
 
-External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi Code 和 Codex 接入 DeepSeek Harness（DSH）。在 DSH 的桌面端和 Web 端，可以像选择模型一样，从当前会话的菜单切换 Agent，也可以让主 Agent 把子任务交给它们。
+External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi Code、Codex 和 Antigravity 接入 DeepSeek Harness（DSH）。在 DSH 的桌面端和 Web 端，可以像选择模型一样，从当前会话的菜单切换 Agent。Kimi Code 和 Codex 也支持接收主 Agent 派发的子任务。
 
 - **在原生对话里使用** — 沿用 DSH 的输入框和会话记录，在原有界面查看工具调用和文件改动、处理审批和提问。
 - **延续已有工作** — 重新打开对话时优先恢复原有 ACP 会话。切换 Agent 时，新 Agent 会收到可见历史的摘要。
@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/5b5c7dfa-9c88-4b5d-8579-40edddd56f8f
 
 ## 安装
 
-需要 Node.js 22+ 和 DSH 0.2.2-rc.5。DSH 0.2.2-rc.3 可继续使用 External Agents 0.2.1。确保本机 CLI 可执行，并先用 `kimi login` 或 `codex login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
+需要 Node.js 22+ 和 DSH 0.2.2-rc.5。DSH 0.2.2-rc.3 可继续使用 External Agents 0.2.1。确保本机 CLI 可执行，并先用 `kimi login`、`codex login` 或 `agy acp --login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
 
 按需安装到 Web 或桌面 profile。
 
@@ -26,13 +26,23 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.2.2.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.2.2.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.0.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.0.tgz"
 ```
 
 安装到桌面 profile 时，使用该桌面发行版自带的 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
 
-安装后，在 DSH 会话的模型菜单中选择「外部 Agent」分组里的 Kimi Code 或 Codex。首次使用某个 CLI 时，设置向导会给出官方安装和登录命令。完成后点击 **重新检测**，即可在原输入框开始对话。
+安装后，在 DSH 会话的模型菜单中选择「外部 Agent」分组里的 Kimi Code、Codex 或 Antigravity。首次使用某个 CLI 时，设置向导会给出官方安装和登录命令。完成后点击 **重新检测**，即可在原输入框开始对话。
+
+### Antigravity
+
+安装官方 CLI：`curl -fsSL https://antigravity.google/cli/install.sh | bash`，然后执行 `agy acp --login` 登录已有 Google 账号。插件以 `agy acp --process-per-session` 运行，复用 CLI 保存的登录和账号额度；不会继承进程环境中的 Gemini API key 或 Cloud 认证覆盖。插件不保存 Google 凭证。
+
+在模型菜单选择「外部 Agent · Antigravity」，可使用账号提供的 Gemini 模型，并调整推理等级。自定义 ACP 客户端的合作方模型可用性受 Google 限制，插件只列出 Gemini 模型。当前仅支持用户直接聊天和手动调用技能，不接受子智能体派发、定时投递或 Remote Tasks。
+
+受限会话使用 Antigravity 的 `default` 模式，在 DSH 中处理审批；完全放开时由 DSH 自动应答单次审批，仍保留 CLI 自身的权限规则。只读或「仅规划」使用 `plan` 模式并拒绝执行审批。权限放宽在下一轮生效，收紧时暂停当前回合。支持原 ACP 会话恢复、图片和可转发的 MCP，按对方实际能力启用。
+
+参考：[官方 ACP 接入](https://antigravity.google/docs/ide/extensions/acp)、[Google 使用范围说明](https://antigravity.google/docs/faq)。
 
 ## 对话与权限
 
@@ -57,7 +67,7 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.2.2.tgz"
     idleWarningMinutes: 5
 ```
 
-`commandOverrides` 可以为 `kimi-code` 或 `codex` 指定 `command` 和 `args`，用于非标准安装路径。
+`commandOverrides` 可以为 `kimi-code`、`codex` 或 `antigravity` 指定 `command` 和 `args`，用于非标准安装路径。
 
 显式设置 `codexTransport: https` 会使用 `dsh-openai-http`。Codex 客户端恢复这些会话时也需要注册该 provider。
 

@@ -47,7 +47,7 @@ export function watchPermissions(options: {
         return
       }
       if (updating) return
-      if (next.mode === applied.mode) {
+      if (next.mode === applied.mode && next.level === applied.level && next.approval === applied.approval) {
         applied = next
         options.deferred(false)
         return

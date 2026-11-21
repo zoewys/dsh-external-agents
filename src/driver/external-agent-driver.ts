@@ -94,7 +94,7 @@ export class ExternalAgentDriver {
       // session/new returns auth-required when the actual login is unavailable.
       const opened = await client.open({ cwd, mcpServers: [] }, this.shutdown.signal)
       probeSession = opened.sessionId
-      return { readiness: { status: 'ready' }, options: sessionOptions(opened) }
+      return { readiness: { status: 'ready' }, options: sessionOptions(opened,agent) }
     } catch (error) {
       const safe = safeError(error)
       return { readiness: { status: safe.code === -32000 ? 'not_logged_in' : 'error', message: safe.message }, options: [] }
@@ -138,7 +138,7 @@ export class ExternalAgentDriver {
         diagnostic: message => this.diagnostic?.(agent,message),
         update: event => {
           if (!live || event.sessionId !== live.binding.acpSessionId) return
-          if (event.update.sessionUpdate === 'config_option_update') live.options = event.update.configOptions
+          if (event.update.sessionUpdate === 'config_option_update') live.options = sessionOptions({configOptions:event.update.configOptions},agent)
           if (event.update.sessionUpdate === 'current_mode_update') {
             const mode = event.update.currentModeId
             live.options = live.options.map(option => option.type === 'select' && option.category === 'mode'
@@ -190,7 +190,7 @@ export class ExternalAgentDriver {
           ]
           for (const method of methods) {
             try {
-              live.options = sessionOptions(await client.restore(method, previous.acpSessionId, openParams, signal))
+              live.options = sessionOptions(await client.restore(method, previous.acpSessionId, openParams, signal),agent)
               live.binding.sentThrough = previous.sentThrough
               restored = true
               break
@@ -207,7 +207,7 @@ export class ExternalAgentDriver {
             ? {configOptions:[{configId:modelOption.id,value:params.model}]} : {}),
           }, signal)
           live.binding.acpSessionId = opened.sessionId
-          live.options = sessionOptions(opened)
+          live.options = sessionOptions(opened,agent)
           if (freshModel) notice('该 Agent 无法在原会话里切换模型。已创建新会话并带入上文摘要。')
           else if (switched) notice('已切换到 ' + profiles[agent].name + '，并带入上文摘要。新 Agent 不会继承原 Agent 的内部记忆。')
           else if (legacySkills) notice('技能已切换为按需加载，新的 ACP 会话带入了 DSH 对话摘要。')
@@ -245,6 +245,11 @@ export class ExternalAgentDriver {
   private async configure(live: Live, mode: string, model: string, effort: string | undefined, signal: AbortSignal) {
     await this.configureMode(live,mode,signal)
     const modelOption = live.options.find(item => item.category === 'model')
+    if (model === '@default' && live.binding.agentId === 'antigravity') {
+      const allowed = modelOption ? choices(modelOption) : []
+      model = allowed.find(choice=>choice.value===modelOption?.currentValue)?.value ?? allowed[0]?.value ?? ''
+      if (!model) throw new AcpError('当前 Antigravity 账号没有可用于此客户端的 Gemini 模型。')
+    }
     if (model !== '@default' && modelOption?.currentValue !== model) {
       if (!modelOption || !choices(modelOption).some(item => item.value === model)) throw new AcpError('这个工作目录下的外部 Agent 未提供所选模型。')
       try { await this.set(live, modelOption, model, signal) }
@@ -299,7 +304,7 @@ export class ExternalAgentDriver {
     else {
       const result = await live.client.set(id, option.id, value, signal)
       if (result.configOptions?.length) {
-        live.options = result.configOptions
+        live.options = sessionOptions({configOptions:result.configOptions},live.binding.agentId)
         const confirmed = live.options.find(item=>item.id===option.id)?.currentValue
         if (confirmed !== value) {
           if (option.category==='model') throw new ModelSwitchUnsupported('外部 Agent 未采用所选模型。')
