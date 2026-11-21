@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
@@ -10,6 +10,7 @@ import { apply } from '../src/host/index.ts'
 
 async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [], config = {}, permission = 'workspace-write', captureFinish = false, child = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(),'dsh-remote-acp-'))
+  let workingDirectory = cwd
   const previousHome = process.env.DSH_HOME
   const previousKimiHome = process.env.KIMI_CODE_HOME
   process.env.DSH_HOME = cwd
@@ -50,6 +51,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
   let adapter
   apply({
     agents:{currentInitiator:()=>agent,get:()=>agent,turnBoundaryOf:()=>turnBoundary},
+    workingDirectory:{ensure:async()=>workingDirectory},
     llm:{registerAdapter:(_providers,value)=>{adapter=value}},
     sandboxPolicy:{resolve:()=>({mode})},
     permissionPresets:{current:()=>preset},
@@ -105,6 +107,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
         : 'Review only for correctness.\n\nReserved DSH tool instructions.\n\nLead with the verdict.'}]}
     },
     disposeAgent:()=>disposeAgent({agent}),
+    cwd, setWorkingDirectory:directory=>{workingDirectory=directory},
     catalog:async()=>({provider:adapter.providerInfo(provider),models:await adapter.listModels(provider)}),
     runWith,
     permissions(next) {
@@ -160,9 +163,62 @@ test('Antigravity selects Gemini when its cached CLI default is a partner model'
   assert.equal(state.options.find(option=>option.category==='model').currentValue,'gemini-test')
 })
 
-test('Antigravity rejects subagent delegation before starting a model turn', async t => {
-  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],child:true})
-  await assert.rejects(run(message('task','Run a delegated task.')),/仅支持.*直接聊天/)
+test('Antigravity completes a delegated turn with a final result and stop signal', async t => {
+  const {runWith,control,events}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],child:true,captureFinish:true})
+  let result=''
+  const finish=await runWith(text=>{result+=text},
+    message('task','Return the delegated result.',{kind:'agent-message',form:'relay',senderSessionId:'parent'}))
+  assert.match(result,/Return the delegated result/)
+  assert.equal(finish.kind,'stop')
+  assert.equal(events.at(-1).type,'turn/end')
+  assert.equal(events.at(-1).data.reason.kind,'completed')
+  const state=(await control('status')).body
+  assert.equal(state.running,false)
+  assert.notEqual(state.pending,true)
+  assert.equal(state.error,undefined)
+  assert.equal(state.idleWarning,undefined)
+})
+
+test('Antigravity denies a restricted child approval without waiting for a user', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],child:true,captureFinish:true})
+  // The fixture ends without a final answer after its approval is denied.
+  assert.equal((await run(message('approval','approval'))).failure.code,'EXTERNAL_AGENT_EMPTY_RESULT')
+})
+
+test('Antigravity reports an empty delegated reply as an error instead of a successful result', async t => {
+  const {run,control}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity'],child:true,captureFinish:true})
+  const finish=await run(message('empty','empty-reply'))
+  assert.equal(finish.kind,'error')
+  assert.equal(finish.failure.code,'EXTERNAL_AGENT_EMPTY_RESULT')
+  assert.match(finish.failure.message,/未返回最终回复/)
+  assert.match((await control('status')).body.error,/未返回最终回复/)
+})
+
+test('Antigravity does not treat a top-level relay as a delegated task', async t => {
+  const {run}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity']})
+  await assert.rejects(run(message('relay','A child notification.',{kind:'agent-message',form:'relay',senderSessionId:'child'})),/仅支持.*直接/)
+})
+
+test('Antigravity reads DSH skills from the effective delegated workspace', async t => {
+  let directory
+  const registry={
+    async list(options) {
+      assert.equal(options.cwd,directory)
+      assert.equal(options.scope.id,'external-session')
+      return [{name:'delegated-skill',description:'A workspace skill',invocation:{modelInvocable:true}}]
+    },
+    async get(name,options) {
+      assert.equal(options.cwd,directory)
+      assert.equal(options.scope.id,'external-session')
+      return {name,invocation:{modelInvocable:true},content:'Body from the delegated workspace.'}
+    },
+  }
+  const {run,cwd,setWorkingDirectory}=await setup(t,{agentKind:'antigravity',model:'gemini-test',args:['antigravity','skill-tools'],child:true,registry})
+  directory=join(cwd,'skill-workspace')
+  await mkdir(directory)
+  setWorkingDirectory(directory)
+  assert.match(JSON.parse(await run(message('list','list-dsh-skills'))).content[0].text,/delegated-skill/)
+  assert.match(JSON.parse(await run(message('read','read-dsh-skill delegated-skill'))).content[0].text,/Body from the delegated workspace/)
 })
 
 test('Antigravity rejects automated remote tasks and schedules while allowing manual skill invocation', async t => {
@@ -173,10 +229,22 @@ test('Antigravity rejects automated remote tasks and schedules while allowing ma
   assert.deepEqual(JSON.parse(await run(skill)).slice(-1),skill.content)
 })
 
-for (const agentKind of ['kimi-code','codex']) {
+for (const agentKind of ['kimi-code','codex','antigravity']) {
+  test(agentKind+' starts ACP in the effective child directory instead of its original session directory', async t => {
+    const antigravity=agentKind==='antigravity'
+    const {run,cwd,setWorkingDirectory}=await setup(t,{agentKind,child:true,
+      args:antigravity?['antigravity']:[],model:antigravity?'gemini-test':'one'})
+    const directory=join(cwd,'delegated-workspace')
+    await mkdir(directory)
+    setWorkingDirectory(directory)
+    const reply=await run(message('cwd','report-cwd'))
+    assert.deepEqual(JSON.parse(reply),{processCwd:await realpath(directory),sessionCwd:directory})
+  })
+
   test(agentKind+' receives the DSH child role, first task and later messages', async t => {
-    const {run,assembleRole,disposeAgent} = await setup(t,{agentKind,child:true,args:['no-resume']})
-    const task = message('task','Audit the first patch.')
+    const {run,assembleRole,disposeAgent} = await setup(t,{agentKind,child:true,
+      args:['no-resume',...agentKind==='antigravity'?['antigravity']:[]],model:agentKind==='antigravity'?'gemini-test':'one'})
+    const task = message('task','Audit the first patch.',{kind:'agent-message',form:'relay',senderSessionId:'parent'})
     const followup = message('relay','Also check the second patch.',{kind:'agent-message',form:'relay',senderSessionId:'parent'})
     const runtime = message('runtime','Reserved DSH runtime data.',{kind:'runtime-context'})
     await assembleRole()

@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-mcp-manager'
+import type {} from '@deepseek-ai/dsh-working-directory'
 
 export type { Context, StreamChunk, GenerateOptions, LlmAdapter, LlmResolvedModelInfo }
 

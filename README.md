@@ -1,11 +1,11 @@
 # External Agents（外部 Agent）
 
-External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi Code、Codex 和 Antigravity 接入 DeepSeek Harness（DSH）。在 DSH 的桌面端和 Web 端，可以像选择模型一样，从当前会话的菜单切换 Agent。Kimi Code 和 Codex 也支持接收主 Agent 派发的子任务。
+External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi Code、Codex 和 Antigravity 接入 DeepSeek Harness（DSH）。在 DSH 的桌面端和 Web 端，可以像选择模型一样，从当前会话的菜单切换 Agent。三个 Agent 均支持接收主 Agent 派发的子任务。
 
 - **在原生对话里使用** — 沿用 DSH 的输入框和会话记录，在原有界面查看工具调用和文件改动、处理审批和提问。
 - **延续已有工作** — 重新打开对话时优先恢复原有 ACP 会话。切换 Agent 时，新 Agent 会收到可见历史的摘要。
 - **复用 Skills 和 MCP** — 外部 Agent 可以按需读取当前会话的 Skills。主会话可共享允许转发且无需凭证的 MCP 服务。登录凭证由各自的 CLI 管理。
-- **派发外部子智能体** — 授权相应模型后，主 Agent 可以把任务交给 Kimi Code 或 Codex，按角色预设和子会话权限执行。同一个子智能体可以继续接收补充指令，完成结果会回到主会话。
+- **派发外部子智能体** — 授权相应模型后，主 Agent 可以把任务交给 Kimi Code、Codex 或 Antigravity，按角色预设和子会话权限执行。同一个子智能体可以继续接收补充指令，完成结果会回到主会话。
 
 ## 演示视频
 
@@ -26,8 +26,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.0.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.0.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.1.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.1.tgz"
 ```
 
 安装到桌面 profile 时，使用该桌面发行版自带的 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。
@@ -38,11 +38,11 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.0.tgz"
 
 安装官方 CLI：`curl -fsSL https://antigravity.google/cli/install.sh | bash`，然后执行 `agy acp --login` 登录已有 Google 账号。插件以 `agy acp --process-per-session` 运行，复用 CLI 保存的登录和账号额度；不会继承进程环境中的 Gemini API key 或 Cloud 认证覆盖。插件不保存 Google 凭证。
 
-在模型菜单选择「外部 Agent · Antigravity」，可使用账号提供的 Gemini 模型，并调整推理等级。自定义 ACP 客户端的合作方模型可用性受 Google 限制，插件只列出 Gemini 模型。当前仅支持用户直接聊天和手动调用技能，不接受子智能体派发、定时投递或 Remote Tasks。
+在模型菜单选择「外部 Agent · Antigravity」，可使用账号提供的 Gemini 模型，并调整推理等级。自定义 ACP 客户端的合作方模型可用性受 Google 限制，插件只列出 Gemini 模型。支持用户直接聊天、手动调用技能和 DSH 原生子智能体派发；子智能体可接收父会话的补充消息，完成结果由 DSH 回传。定时投递和 Remote Tasks 仍不接受。
 
 受限会话使用 Antigravity 的 `default` 模式，在 DSH 中处理审批；完全放开时由 DSH 自动应答单次审批，仍保留 CLI 自身的权限规则。只读或「仅规划」使用 `plan` 模式并拒绝执行审批。权限放宽在下一轮生效，收紧时暂停当前回合。支持原 ACP 会话恢复、图片和可转发的 MCP，按对方实际能力启用。
 
-参考：[官方 ACP 接入](https://antigravity.google/docs/ide/extensions/acp)、[Google 使用范围说明](https://antigravity.google/docs/faq)。
+参考：[官方 ACP 接入](https://antigravity.google/docs/ide/extensions/acp)、[Google 使用范围说明](https://antigravity.google/docs/faq)。DSH 子智能体派发属于本插件的集成功能；Google 文档未明确说明个人订阅通过第三方 ACP 客户端自动派发的支持范围，插件不保证该使用方式获得 Google 官方支持。
 
 ## 对话与权限
 
@@ -81,7 +81,7 @@ dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.0.tgz"
 
 ## 派发子智能体
 
-1. 在 DSH 的「子智能体 → 模型选择」设置中，开启「允许 Agent 为子智能体选择模型」，授权「外部 Agent」分组里的 Kimi Code 或 Codex 模型，然后新建会话。
+1. 在 DSH 的「子智能体 → 模型选择」设置中，开启「允许 Agent 为子智能体选择模型」，授权「外部 Agent」分组里的 Kimi Code、Codex 或 Antigravity 模型，然后新建会话。
 2. 在主会话使用带有原生子智能体工具的 DSH 智能体，要求它把任务派给指定的外部 Agent。派发沿用 DSH 的 `subagent` 工具、模型授权和角色预设。预设可由 DSH 部署允许选择，省略角色预设时沿用 DSH 自身的预设继承。
 3. 主会话用 `send_message` 向同一个子智能体继续发消息。子智能体可以在完成后被唤醒，DSH 会把每次完成的结果交回主会话。
 

@@ -22,7 +22,7 @@ import { lastPermissionPause, permissionPauseReason, watchPermissions } from './
 
 export const name = 'external-agents'
 export { Config } from './config.ts'
-export const inject = ['agents', 'sessions', 'llm', 'sandboxPolicy', 'permissionPresets', 'approval', 'userQuestions', 'sessionController', 'webServer', 'connection']
+export const inject = ['agents', 'sessions', 'llm', 'workingDirectory', 'sandboxPolicy', 'permissionPresets', 'approval', 'userQuestions', 'sessionController', 'webServer', 'connection']
 const routePrefix = 'external-acp-'
 const defaultModel = '@default'
 const agentEntries = Object.keys(profiles) as AgentId[]
@@ -65,7 +65,10 @@ interface UiState {
 function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<string, UiState>,
   personas: WeakMap<Agent, readonly string[]>): LlmAdapter {
   const display = (provider: string) => profiles[routeAgent(provider)!].name
-  const cwd = () => ctx.agents.currentInitiator()?.session.header.cwd ?? process.cwd()
+  const cwd = async () => {
+    const agent = ctx.agents.currentInitiator()
+    return agent ? ctx.workingDirectory.ensure(agent) : process.cwd()
+  }
   const resolved = (provider: string, model: string, options: SessionConfigOption[] = []): LlmResolvedModelInfo => {
     const thing = options.find(option => option.category === 'thought_level')
     const reasoning = thing ? choices(thing).map(choice => ({
@@ -82,7 +85,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     const agent = ctx.agents.currentInitiator()
     const kind = routeAgent(provider)!
     const live = agent ? driver.current(agent.id) : undefined
-    const options = live?.binding.agentId === kind && !live.client.closed ? live.options : (await driver.probe(kind,cwd())).options
+    const options = live?.binding.agentId === kind && !live.client.closed ? live.options : (await driver.probe(kind,await cwd())).options
     return resolved(provider,model,options)
   }
   async function* stream(request: GenerateOptions): AsyncGenerator<StreamChunk> {
@@ -93,9 +96,9 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       throw new AcpError('外部 Agent 只接受当前 DSH 会话的用户回合。')
     }
     const delegated = isDelegatedChild(agent)
-    if (id === 'antigravity' && delegated) throw new AcpError('Antigravity 当前仅支持用户直接聊天，不支持子智能体派发。')
     const accepts = (message: Message) => id === 'antigravity'
-      ? message.role === 'user' && ['user','skill-invocation'].includes(message.source?.kind ?? '')
+      ? (message.role === 'user' && ['user','skill-invocation'].includes(message.source?.kind ?? ''))
+        || (delegated && isDelegationMessage(message))
       : isExplicitInput(message) || (delegated && isDelegationMessage(message))
     const streamLifetime = new AbortController()
     const signal = request.signal ? AbortSignal.any([request.signal,streamLifetime.signal]) : streamLifetime.signal
@@ -116,6 +119,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     state.planText = undefined
     state.idleWarning = undefined
     let delta = ''
+    let receivedReply = false
     const queue: string[] = []
     const tools = dshTools(agent, position,{provider:request.provider,model:request.model})
     let wake: () => void = () => {}
@@ -168,13 +172,14 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       const planning = nativePlan?.get(agent).active ?? state.plan
       const readPermissions = () => executionPermissions(ctx,agent,id,planning)
       let mode = readPermissions().mode
+      const directory = await ctx.workingDirectory.ensure(agent,signal)
       const live = await driver.prepare({
-        id: agent.id, agent: id, cwd: session.header.cwd ?? process.cwd(),
+        id: agent.id, agent: id, cwd: directory,
         securityMode: mode, model: request.model,
         effort: request.reasoningEffort, signal,
         summary: summarize(msgs.slice(0, firstCurrent), delegated), nativeIntervened, notice,
         permissionContinuation: lastPermissionPause(session,openTurnStartSeq) !== undefined,
-        injection: config => collectInjection(ctx,agent,config),
+        injection: config => collectInjection(ctx,agent,config,directory),
       })
       const content: ContentBlock[] = []
       for (const message of input) {
@@ -223,7 +228,10 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
       const result = await driver.prompt(live, {
         signal,
         update(update) {
-          if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') text(update.content.text)
+          if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
+            receivedReply ||= !!update.content.text.trim()
+            text(update.content.text)
+          }
           if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') tools.receive(update)
           if (update.sessionUpdate === 'usage_update') {
             state.usage = 'ACP 上下文：' + update.used + ' / ' + update.size
@@ -243,6 +251,11 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
           ? Promise.resolve({action:'decline'})
           : pending(() => elicit(ctx,agent,req,interactionSignal)),
       }, content, input.at(-1)?.id ?? null)
+      if (id === 'antigravity' && delegated && result.stopReason === 'end_turn' && !receivedReply) {
+        state.error = 'Antigravity 子智能体已结束，但未返回最终回复；请由主会话检查工具结果后续发。'
+        text(state.error)
+        finish = {type:'finish',reason:{kind:'error',failure:{code:'EXTERNAL_AGENT_EMPTY_RESULT',message:state.error}}}
+      }
       if (result.stopReason === 'max_tokens') finish = {type:'finish',reason:{kind:'max-tokens'}}
       if (result.stopReason === 'refusal' && !queue.length && !delta) text('外部 Agent 拒绝了这次请求。')
       const u = result.usage
@@ -292,7 +305,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     providerRetryPolicy: () => ({mode:'normal',maxRetries:0,retryableCodes:[],initialDelayMs:0,maxDelayMs:0,jitterRatio:0}),
     async listModels(provider) {
       const id = routeAgent(provider)!
-      const options = (await driver.probe(id,cwd())).options
+      const options = (await driver.probe(id,await cwd())).options
       const model = options.find(option => option.category === 'model')
       return [{...resolved(provider,defaultModel,options),badge:modelBadge}, ...(model ? choices(model).map(choice => ({
         ...resolved(provider,choice.value,options), name:choice.name, description:choice.description ?? undefined, badge:modelBadge,
@@ -306,7 +319,7 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
   }
 }
 
-function collectInjection(ctx: Host, agent: Agent, config: ExternalAgentDriver['config']): Injection {
+function collectInjection(ctx: Host, agent: Agent, config: ExternalAgentDriver['config'], cwd: string): Injection {
   const notices: string[] = []
   const entries: Record<string, McpEntry> = Object.create(null)
   // The host MCP config has no per-preset tool authorization. A delegated run
@@ -322,7 +335,7 @@ function collectInjection(ctx: Host, agent: Agent, config: ExternalAgentDriver['
     }
   }
   const registry = config.injectDshSkills ? agent.ctx.get('skills') as Host['skills'] | undefined : undefined
-  return {entries,notices,skills:registry ? {registry,scope:agent,cwd:agent.session.header.cwd ?? process.cwd()} : undefined}
+  return {entries,notices,skills:registry ? {registry,scope:agent,cwd} : undefined}
 }
 
 export function apply(ctx: Host, raw?: unknown) {
@@ -376,7 +389,7 @@ export function apply(ctx: Host, raw?: unknown) {
       const probe = live ? {readiness:{status:'ready'},options:live.options}
         : agent.status === 'running' ? {readiness:{status:'checking'},options:[]}
         : permissionPause !== undefined && !refresh ? {readiness:{status:'ready'},options:[]}
-        : await driver.probe(kind,agent.session.header.cwd ?? process.cwd(),refresh)
+        : await driver.probe(kind,await ctx.workingDirectory.ensure(agent),refresh)
       const state = states.get(id)
       return {
         agent:kind, name:profiles[kind].name, install:profiles[kind].install, login:profiles[kind].login, delegated,

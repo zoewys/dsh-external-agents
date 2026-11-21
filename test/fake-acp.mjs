@@ -7,6 +7,7 @@ const reply = (id,result) => send({id,result})
 const send = data => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...data})+'\n')
 let current
 let skillEndpoint
+let sessionCwd
 let held
 const quotaFixture = process.argv.includes('kimi-quota-log')
 const sessionId = quotaFixture ? 'session_'+randomUUID() : 'fake-'+process.pid
@@ -27,11 +28,13 @@ for await (const line of input) {
   if (method === 'initialize') {
     reply(id,{protocolVersion:1,authMethods:[{id:'login',name:'Login'}],agentCapabilities:{...(process.argv.includes('skill-tools')?{mcpCapabilities:{http:true}}:{}),sessionCapabilities:{resume:{},close:{},delete:{},...(process.argv.includes('cold-model')?{options:{}}:{})},promptCapabilities:{embeddedContext:true}}})
   } else if (method === 'session/new') {
+    sessionCwd=params.cwd
     skillEndpoint = params.mcpServers.find(server=>server.name==='dsh_skills')?.url
     if (process.argv.includes('cold-model') && params.configOptions?.some(x=>x.configId==='model'&&x.value==='two')) options[1].currentValue='two'
     if (process.argv.includes('logged-out')) send({id,error:{code:-32000,message:'auth required'}})
     else reply(id,{sessionId,configOptions:options})
   } else if (method === 'session/resume') {
+    sessionCwd=params.cwd
     if (process.argv.includes('no-resume')) send({id,error:{code:-32002,message:'not found'}})
     else {
       send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'do not replay'}}}})
@@ -75,6 +78,8 @@ for await (const line of input) {
           ' WARN  llm request failed  turnStep=0.1 model=kimi-code/k3 errorName=APIProviderQuotaExhaustedError errorMessage="You reached your 5-hour usage limit. private-log-text" statusCode=429\n')
       }
       reply(id,{stopReason:'end_turn'})
+    } else if (text === 'empty-reply') {
+      reply(id,{stopReason:'end_turn'})
     } else if (text === 'diagnostic-error') {
       process.stderr.write('ENOTFOUND ENOTFOUND authorization: Bearer fixture-secret\nuntrusted stderr ECONN')
       setTimeout(()=>{
@@ -91,6 +96,9 @@ for await (const line of input) {
         update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'tool finished'}})
         reply(id,{stopReason:'end_turn'})
       },380)
+    } else if (text === 'report-cwd') {
+      send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({processCwd:process.cwd(),sessionCwd})}}}})
+      reply(id,{stopReason:'end_turn'})
     } else if (text === 'hold-mode' || text === 'report-mode') {
       const chunk = text => send({method:'session/update',params:{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})
       if (text === 'hold-mode') {
