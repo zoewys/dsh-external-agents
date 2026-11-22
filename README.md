@@ -7,6 +7,34 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 - **复用 Skills 和 MCP** — 外部 Agent 可以按需读取当前会话的 Skills。主会话可共享允许转发且无需凭证的 MCP 服务。登录凭证由各自的 CLI 管理。
 - **派发外部子智能体** — 授权相应模型后，主 Agent 可以把任务交给 Kimi Code、Codex 或 Antigravity，按角色预设和子会话权限执行。同一个子智能体可以继续接收补充指令，完成结果会回到主会话。
 
+## 试用说明
+
+给 DeepSeek Harness（DSH）做了一个外部 Agent 插件，可以在 DSH 原来的对话界面里使用 **Codex、Kimi Code 和 Antigravity**，复用本机已有的 CLI 登录状态，也支持 Skills、MCP 和子智能体。现在开放 **0.3.2 试用版**，欢迎试用并反馈安装、模型切换和日常使用中遇到的问题。
+
+- [下载安装包：dsh-external-agents-0.3.2.tgz](https://github.com/zoewys/dsh-external-agents/releases/download/v0.3.2/dsh-external-agents-0.3.2.tgz)（约 39 KB，无需解压或自行编译）
+- [Release 页面与校验文件](https://github.com/zoewys/dsh-external-agents/releases/tag/v0.3.2)
+
+**使用前准备**
+
+当前试用包适配 **DSH 0.2.2-rc.5**，需要 **Node.js 22+**。想使用哪个 Agent，就安装并登录对应的 CLI，无需把三个都装上。插件使用各自账号的权限和额度。
+
+**安装步骤**
+
+1. 打开 DSH 的插件管理页面，点击 **添加插件 → 安装第三方插件**。
+2. 在 **包名或地址** 中粘贴下面的安装包直链，按提示检查并确认安装：
+
+   ```text
+   https://github.com/zoewys/dsh-external-agents/releases/download/v0.3.2/dsh-external-agents-0.3.2.tgz
+   ```
+
+3. 安装完成后启用插件；如果 DSH 提示需要重启，按提示重启应用。
+4. 打开一个对话，在模型菜单的 **外部 Agent** 分组中选择 Codex、Kimi Code 或 Antigravity。
+5. 首次使用时，按设置向导完成所选 CLI 的安装和登录，再点击 **重新检测**。常用登录命令是 `codex login`、`kimi login` 或 `agy acp --login`；检测通过后，就可以在原来的输入框里开始对话。
+
+安装时需要本机能访问 GitHub；Codex 首次启动可能还需要访问 npm 下载适配器。当前已在 macOS 日用验证，Windows / Linux 尚未验收。Antigravity 当前只提供账号可用的 Gemini 模型，暂不支持定时投递和 Remote Tasks。
+
+有问题可以到 [Issues](https://github.com/zoewys/dsh-external-agents/issues) 反馈，附上 DSH、插件和 CLI 版本、复现步骤及脱敏错误信息。
+
 ## 演示视频
 
 展示 ACP 接入、原生模型切换、Skills 与 MCP 共享，以及子智能体委派和结果回传。
@@ -15,7 +43,7 @@ https://github.com/user-attachments/assets/5b5c7dfa-9c88-4b5d-8579-40edddd56f8f
 
 [下载 MP4（约 29 秒，静音）](https://raw.githubusercontent.com/zoewys/dsh-external-agents/main/docs/media/external-agents-demo.mp4)
 
-## 安装
+## 从源码安装
 
 需要 Node.js 22+ 和 DSH 0.2.2-rc.5。DSH 0.2.2-rc.3 可继续使用 External Agents 0.2.1。确保本机 CLI 可执行，并先用 `kimi login`、`codex login` 或 `agy acp --login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
 
