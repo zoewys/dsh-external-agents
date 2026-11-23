@@ -7,7 +7,13 @@ External Agents 通过 ACP（Agent Client Protocol）把本机已登录的 Kimi 
 - **复用 Skills 和 MCP** — 外部 Agent 可以按需读取当前会话的 Skills。主会话可共享允许转发且无需凭证的 MCP 服务。登录凭证由各自的 CLI 管理。
 - **派发外部子智能体** — 授权相应模型后，主 Agent 可以把任务交给 Kimi Code、Codex 或 Antigravity，按角色预设和子会话权限执行。同一个子智能体可以继续接收补充指令，完成结果会回到主会话。
 
-## 试用说明
+## DSH 0.2.3 兼容版
+
+当前源码版本 **0.3.3** 适配 **DSH 0.2.3-alpha.2**，需要 Node.js 22+。DSH 0.2.2-rc.5 请继续使用下方的 0.3.2 安装包；两个版本的安装包不能混用。
+
+0.3.3 同步升级 DSH 依赖，并支持新版分段更新的角色指令：子智能体保留仍有效的角色要求，更新或撤销后不再带入旧指令。兼容版可按「从源码安装」构建本地安装包。
+
+## 0.3.2 试用说明
 
 给 DeepSeek Harness（DSH）做了一个外部 Agent 插件，可以在 DSH 原来的对话界面里使用 **Codex、Kimi Code 和 Antigravity**，复用本机已有的 CLI 登录状态，也支持 Skills、MCP 和子智能体。现在开放 **0.3.2 试用版**，欢迎试用并反馈安装、模型切换和日常使用中遇到的问题。
 
@@ -45,7 +51,7 @@ https://github.com/user-attachments/assets/5b5c7dfa-9c88-4b5d-8579-40edddd56f8f
 
 ## 从源码安装
 
-需要 Node.js 22+ 和 DSH 0.2.2-rc.5。DSH 0.2.2-rc.3 可继续使用 External Agents 0.2.1。确保本机 CLI 可执行，并先用 `kimi login`、`codex login` 或 `agy acp --login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
+当前源码需要 Node.js 22+ 和 DSH 0.2.3-alpha.2。DSH 0.2.2-rc.5 可继续使用 External Agents 0.3.2，DSH 0.2.2-rc.3 可继续使用 0.2.1。确保本机 CLI 可执行，并先用 `kimi login`、`codex login` 或 `agy acp --login` 登录。Codex 适配器优先使用 PATH 中的 `codex-acp`，否则自动用 npm 拉取固定版本 `@agentclientprotocol/codex-acp@2.6.0`。首次启动需要能访问 npm。
 
 按需安装到 Web 或桌面 profile。
 
@@ -54,8 +60,8 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm pack
-dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.2.tgz"
-dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.2.tgz"
+dsh plugin --profile web add "$PWD/dsh-external-agents-0.3.3.tgz"
+dsh plugin --profile desktop add "$PWD/dsh-external-agents-0.3.3.tgz"
 ```
 
 安装到桌面 profile 时，使用该桌面发行版自带的 CLI。桌面 profile 需先由应用初始化，安装前完全退出该实例，之后重新打开。

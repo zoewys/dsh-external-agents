@@ -1,7 +1,8 @@
 export interface Message {
   role: string
   id?: string
-  source?: {kind?: string; eventId?: string; form?: string; senderSessionId?: string}
+  source?: {kind?: string; eventId?: string; form?: string; senderSessionId?: string;
+    reset?: boolean; complete?: boolean; sections?: readonly unknown[]}
   content: readonly {type: string; text?: string; name?: string}[]
 }
 

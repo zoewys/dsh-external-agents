@@ -32,6 +32,13 @@ function turn(signal,updates=[]) {
 }
 const text = text => [{type:'text',text}]
 
+test('cold ACP session startup can exceed the short control-request budget', async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  t.mock.method(AbortSignal,'timeout',ms=>timeout(ms===20_000 ? 10 : ms===60_000 ? 2_000 : ms))
+  const {make,request} = await setup(t,['slow-session'])
+  assert.equal((await make().probe('codex',request.cwd)).readiness.status,'ready')
+})
+
 test('probe distinguishes a CLI that advertises auth from one that requires login',async t=>{
   const {make,request} = await setup(t)
   const clean = make()

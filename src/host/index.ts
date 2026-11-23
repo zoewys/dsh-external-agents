@@ -323,7 +323,8 @@ function nativeAdapter(ctx: Host, driver: ExternalAgentDriver, states: Map<strin
     resolveModel: describe,
     prepareCall: async (provider,model) => ({model:await describe(provider,model),stream}),
     imageRequestPricing: () => undefined,
-    imageRequestTarget: (_p,_m,image) => ({width:image.width,height:image.height,maxBytes:image.bytes}),
+    imageRequestTarget: (_p,_m,image) => ({width:image.width,height:image.height,
+      maxImageBytes:image.bytes,imageTargetBytes:image.bytes}),
     stream,
   }
 }
@@ -444,7 +445,7 @@ export function apply(ctx: Host, raw?: unknown) {
       }]})
     },
   })
-  ctx.effect(() => async () => { stopSetup(); await driver.close() })
+  ctx.effect(() => async () => { await stopSetup(); await driver.close() })
 }
 
 function validChoice(option: SessionConfigOption, value: unknown): value is string | boolean {

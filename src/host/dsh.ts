@@ -1,4 +1,3 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { StreamChunk, GenerateOptions, LlmAdapter, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -11,10 +10,8 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-mcp-manager'
 import type {} from '@deepseek-ai/dsh-working-directory'
+import type {} from '@deepseek-ai/dsh-client-connection'
 
 export type { Context, StreamChunk, GenerateOptions, LlmAdapter, LlmResolvedModelInfo }
 
-export type Host = Context & {
-  connection: { requestRejection(req: IncomingMessage): number | undefined }
-  webServer: { register(route: {kind:'prefix'; path:string; handler(req:IncomingMessage,res:ServerResponse): Promise<void>}): () => void }
-}
+export type Host = Context

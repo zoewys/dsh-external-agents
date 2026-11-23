@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Host } from './dsh.ts'
 import { AcpError, safeError } from '../acp/client.ts'
 
@@ -10,48 +9,57 @@ interface Setup {
   resume(id: string, pause: number): Promise<void>
 }
 
-function reply(res: ServerResponse, status: number, data: unknown) {
-  res.writeHead(status, {'content-type':'application/json; charset=utf-8','cache-control':'no-store'})
-  res.end(JSON.stringify(data))
+function reply(status: number, data: unknown) {
+  return new Response(JSON.stringify(data),{status,headers:{
+    'content-type':'application/json; charset=utf-8','cache-control':'no-store',
+  }})
 }
 
-async function parse(req: IncomingMessage) {
-  let data = ''
-  for await (const chunk of req) {
-    data += String(chunk)
-    if (data.length > 2048) throw new AcpError('请求过大。')
-  }
-  return JSON.parse(data) as Record<string,unknown>
+async function parse(req: Request) {
+  const reader = req.body?.getReader()
+  if (!reader) throw new AcpError('请求为空。')
+  const decoder = new TextDecoder()
+  let data = '', bytes = 0
+  try {
+    while (true) {
+      const {done,value} = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > 2048) { await reader.cancel(); throw new AcpError('请求过大。') }
+      data += decoder.decode(value,{stream:true})
+    }
+    return JSON.parse(data + decoder.decode()) as Record<string,unknown>
+  } finally { reader.releaseLock() }
 }
 
 export function registerSetup(ctx: Host, api: Setup) {
   const nonce = randomBytes(32).toString('base64url')
-  return ctx.webServer.register({kind:'prefix',path:base,async handler(req,res) {
-    try {
-      const rejected = ctx.connection.requestRejection(req)
-      if (rejected || req.headers['sec-fetch-site'] === 'cross-site'
-        || (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host)) {
-        reply(res,rejected || 403,{error:'DSH 拒绝了这个请求。'})
-        return
-      }
-      const url = new URL(req.url ?? '/', 'http://localhost')
-      if (req.method === 'GET' && url.pathname === base + '/bootstrap') { reply(res,200,{nonce}); return }
-      if (req.headers['x-dsh-external-agents'] !== nonce) { reply(res,403,{error:'请重新打开会话。'}); return }
-      if (req.method !== 'POST' || url.pathname !== base || req.headers['content-type']?.split(';')[0] !== 'application/json') {
-        reply(res,405,{error:'不支持的请求。'}); return
-      }
-      const { id, action, key, value } = await parse(req)
-      if (typeof id !== 'string' || !id || id.length > 180) throw new AcpError('无效的会话编号。')
-      if (action === 'status' || action === 'probe') reply(res,200,await api.status(id,action === 'probe'))
-      else if (action === 'option' && typeof key === 'string') {
-        await api.option(id,key,value)
-        reply(res,200,{ok:true})
-      } else if (action === 'resume' && typeof key === 'number' && Number.isSafeInteger(key)) {
-        await api.resume(id,key)
-        reply(res,200,{ok:true})
-      } else reply(res,400,{error:'不支持的操作。'})
-    } catch (error) {
-      if (!res.headersSent) reply(res,400,{error:safeError(error).message})
-    }
-  }})
+  // DSH owns Host/Origin validation, authentication and owner-only admission
+  // for these exact Fetch routes, including the desktop's private transport.
+  const stopBootstrap = ctx.connection.fetch.register({
+    path:base+'/bootstrap',methods:['GET'],requestBody:'buffered',
+    async fetch() { return reply(200,{nonce}) },
+  })
+  const stopControl = ctx.connection.fetch.register({
+    path:base,methods:['POST'],requestBody:'streaming',
+    async fetch(req) {
+      try {
+        if (req.headers.get('x-dsh-external-agents') !== nonce) return reply(403,{error:'请重新打开会话。'})
+        if (req.headers.get('content-type')?.split(';')[0] !== 'application/json') return reply(405,{error:'不支持的请求。'})
+        const { id, action, key, value } = await parse(req)
+        if (typeof id !== 'string' || !id || id.length > 180) throw new AcpError('无效的会话编号。')
+        if (action === 'status' || action === 'probe') return reply(200,await api.status(id,action === 'probe'))
+        if (action === 'option' && typeof key === 'string') {
+          await api.option(id,key,value)
+          return reply(200,{ok:true})
+        }
+        if (action === 'resume' && typeof key === 'number' && Number.isSafeInteger(key)) {
+          await api.resume(id,key)
+          return reply(200,{ok:true})
+        }
+        return reply(400,{error:'不支持的操作。'})
+      } catch (error) { return reply(400,{error:safeError(error).message}) }
+    },
+  })
+  return async () => { await Promise.all([stopBootstrap(),stopControl()]) }
 }

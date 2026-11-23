@@ -57,9 +57,10 @@ export function connect(command: Command, cwd: string, env: NodeJS.ProcessEnv, h
       clientCapabilities: { elicitation: { form: {} }, plan: {} },
     }, time(signal, 45_000)),
     open: (params: NewSessionRequest, signal?: AbortSignal) =>
-      client.agent.request<NewSessionResponse>('session/new', params, time(signal)),
+      // Cold CLI startup can initialize its own MCP services before replying.
+      client.agent.request<NewSessionResponse>('session/new', params, time(signal,60_000)),
     restore: (method: 'session/load' | 'session/resume', sessionId: string, params: NewSessionRequest, signal?: AbortSignal) =>
-      client.agent.request<LoadSessionResponse | undefined>(method, { ...params, sessionId }, time(signal)),
+      client.agent.request<LoadSessionResponse | undefined>(method, { ...params, sessionId }, time(signal,60_000)),
     set: (sessionId: string, configId: string, value: string | boolean, signal?: AbortSignal) =>
       client.agent.request('session/set_config_option', typeof value === 'boolean' ? { sessionId, configId, value, type: 'boolean' } : { sessionId, configId, value }, time(signal, 8_000)),
     setMode: (sessionId: string, modeId: string, signal?: AbortSignal) =>

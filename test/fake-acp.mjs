@@ -29,6 +29,7 @@ for await (const line of input) {
   if (method === 'initialize') {
     reply(id,{protocolVersion:1,authMethods:[{id:'login',name:'Login'}],agentCapabilities:{...(process.argv.includes('skill-tools')?{mcpCapabilities:{http:true}}:{}),sessionCapabilities:{resume:{},close:{},delete:{},...(process.argv.includes('cold-model')?{options:{}}:{})},promptCapabilities:{embeddedContext:true}}})
   } else if (method === 'session/new') {
+    if (process.argv.includes('slow-session')) await new Promise(resolve=>setTimeout(resolve,40))
     sessionCwd=params.cwd
     skillEndpoint = params.mcpServers.find(server=>server.name==='dsh_skills')?.url
     if (process.argv.includes('cold-model') && params.configOptions?.some(x=>x.configId==='model'&&x.value==='two')) options[1].currentValue='two'

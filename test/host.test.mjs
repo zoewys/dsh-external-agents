@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { createServer } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,7 +31,8 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
   const diagnostics = []
   const queued = []
   const approvalRequests = []
-  let route, listener, assemble, systemPrompt, disposeAgent, controller, turnBoundary, server
+  const routes = new Map()
+  let listener, assemble, systemPrompt, disposeAgent, controller, turnBoundary
   let mode = permission
   let preset = permission
   let policy = permission === 'danger-full-access' ? 'never' : 'ask'
@@ -61,7 +61,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
       return 'rejected'
     }},
     logger:{warn:message=>diagnostics.push(message)},
-    webServer:{register:opts=>{route=opts.handler;return ()=>{}}}, connection:{requestRejection:()=>undefined},
+    connection:{fetch:{register:route=>{routes.set(route.path,route);return async()=>{routes.delete(route.path)}}}},
     get:()=>undefined,on(name,fn) {
       if (name==='session/event') listener=fn
       if (name==='system-prompt/assemble') assemble=fn
@@ -97,6 +97,7 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
   }
 
   return {
+    imageTarget:image=>adapter.imageRequestTarget(provider,model,image),
     run:(...messages)=>runWith(undefined,...messages),
     assembleRole: async (complete = false) => {
       const presentation = {
@@ -150,16 +151,12 @@ async function setup(t, { agentKind = 'codex', model = 'one', registry, args = [
       listener(agent.session,append('approval/policy',{policy}))
     },
     async control(action,extra={}) {
-      if(!server) {
-        server=createServer(route)
-        await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
-        t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections()}))
-      }
-      const url='http://127.0.0.1:'+server.address().port+'/api/dsh-external-agents'
-      const {nonce}=await fetch(url+'/bootstrap').then(res=>res.json())
-      return fetch(url,{method:'POST',headers:{'content-type':'application/json','x-dsh-external-agents':nonce},
+      const path='/api/dsh-external-agents'
+      const url='http://localhost'+path
+      const {nonce}=await routes.get(path+'/bootstrap').fetch(new Request(url+'/bootstrap')).then(res=>res.json())
+      return routes.get(path).fetch(new Request(url,{method:'POST',headers:{'content-type':'application/json','x-dsh-external-agents':nonce},
         body:JSON.stringify({id:agent.id,action,...extra}),
-      }).then(async res=>({ok:res.ok,body:await res.json()}))
+      })).then(async res=>({ok:res.ok,body:await res.json()}))
     },
     cancellations, diagnostics, events, queued, approvalRequests,
     stop: dispose,
@@ -303,6 +300,14 @@ test('a top-level external Agent turn keeps DSH-only messages out of ACP', async
   const input = message('user','Only this input.')
   const relay = message('relay','Another agent message.',{kind:'agent-message',form:'relay',senderSessionId:'child'})
   assert.equal(await run(input,relay),JSON.stringify(input.content))
+})
+
+test('image requests expose the DSH 0.2.3 hard and preferred byte limits', async t => {
+  const {imageTarget} = await setup(t)
+  const image = {width:1280,height:720,bytes:64000}
+  assert.deepEqual(imageTarget(image),{
+    width:1280,height:720,maxImageBytes:64000,imageTargetBytes:64000,
+  })
 })
 
 test('a complete DSH child persona suppresses inactive role sections', async t => {
